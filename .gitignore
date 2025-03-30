@@ -1,0 +1,6 @@
+bin/
+obj/
+.vs/
+.vscode/
+TestD3D12_dxgi.log
+

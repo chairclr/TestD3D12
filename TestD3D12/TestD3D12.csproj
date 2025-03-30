@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ppy.SDL3-CS" Version="2025.220.0" />
+    <PackageReference Include="Vortice.Direct3D12" Version="3.6.2" />
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Copy SourceFiles="$(ProjectDir)vkd3d/d3d12.dll.so" DestinationFolder="$(OutputPath)" />
+    <Copy SourceFiles="$(ProjectDir)vkd3d/dxgi.dll.so" DestinationFolder="$(OutputPath)" />
+    <Copy SourceFiles="$(ProjectDir)vkd3d/libvkd3d-proton-d3d12core.so" DestinationFolder="$(OutputPath)" />
+  </Target>
+
+</Project>
