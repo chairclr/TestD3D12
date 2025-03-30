@@ -1,6 +1,11 @@
 using System.ComponentModel;
 using System.Dynamic;
+using System.Numerics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
+using SDL;
 using SharpGen.Runtime;
 using TestD3D12.Logging;
 using TestD3D12.Windowing;
@@ -19,7 +24,6 @@ public class D3D12Renderer : IDisposable
     public readonly BaseWindow Window;
 
     private const int SwapChainBufferCount = 2;
-    private uint _backbufferIndex = 0;
 
     public readonly IDXGIFactory4 DXGIFactory;
     public readonly ID3D12Device2 Device;
@@ -28,12 +32,12 @@ public class D3D12Renderer : IDisposable
 
     private readonly ID3D12DescriptorHeap _rtvDescriptorHeap;
     private readonly uint _rtvDescriptorSize;
-    private readonly ID3D12Resource[] _renderTargets;
+    private ID3D12Resource[] _renderTargets;
 
     private const Format PreferredDepthStencilFormat = Format.D32_Float;
     private readonly ID3D12DescriptorHeap _dsvDescriptorHeap;
-    private readonly Format _depthStencilFormat;
-    private readonly ID3D12Resource _depthStencilTexture;
+    private Format _depthStencilFormat;
+    private ID3D12Resource _depthStencilTexture;
 
     private readonly ID3D12CommandAllocator[] _commandAllocators;
 
@@ -42,10 +46,12 @@ public class D3D12Renderer : IDisposable
 
     private readonly ID3D12GraphicsCommandList4 _commandList;
 
+    private readonly ID3D12Resource _vertexBuffer;
+
     private readonly ID3D12Fence _frameFence;
-    private readonly AutoResetEvent _frameFenceEvent;
-    private ulong _frameCount;
-    private ulong _frameIndex;
+    private readonly UnixAutoResetEvent _frameFenceEvent;
+    private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
+    private uint _frameIndex;
 
     private bool _disposed;
 
@@ -85,16 +91,15 @@ public class D3D12Renderer : IDisposable
         GraphicsQueue = Device.CreateCommandQueue(CommandListType.Direct);
         GraphicsQueue.Name = "Graphics Queue";
 
-        CreateSwapChain(out SwapChain, out _backbufferIndex);
+        CreateSwapChain(out SwapChain, out _frameIndex);
 
-        // Render target view and depth stencil view descriptor heaps
         _rtvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.RenderTargetView, SwapChainBufferCount));
         _rtvDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.RenderTargetView);
 
         _dsvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.DepthStencilView, 1));
 
-        CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
         CreateFrameResources(out _renderTargets);
+        CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
 
         _commandAllocators = new ID3D12CommandAllocator[SwapChainBufferCount];
         for (int i = 0; i < SwapChainBufferCount; i++)
@@ -112,9 +117,21 @@ public class D3D12Renderer : IDisposable
 
         _rootSignature = Device.CreateRootSignature(rootSignatureDesc);
 
+        InputElementDescription[] inputElementDescs =
+        [
+            new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
+            new InputElementDescription("COLOR", 0, Format.R32G32B32_Float, 12, 0)
+        ];
+
+        ReadOnlyMemory<byte> triangleVS = ShaderLoader.LoadShaderBytecode("Basic/TriangleVS");
+        ReadOnlyMemory<byte> trianglePS = ShaderLoader.LoadShaderBytecode("Basic/TrianglePS");
+
         GraphicsPipelineStateDescription psoDesc = new()
         {
             RootSignature = _rootSignature,
+            VertexShader = triangleVS,
+            PixelShader = trianglePS,
+            InputLayout = new InputLayoutDescription(inputElementDescs),
             SampleMask = uint.MaxValue,
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RasterizerState = RasterizerDescription.CullCounterClockwise,
@@ -130,11 +147,52 @@ public class D3D12Renderer : IDisposable
         _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[0], _pipelineState);
         _commandList.Close();
 
-        _frameFence = Device.CreateFence(0);
-        _frameFenceEvent = new AutoResetEvent(false);
+        ulong vertexBufferSize = 3 * (ulong)Unsafe.SizeOf<TriangleVertex>();
 
-        while (true)
+        _vertexBuffer = Device.CreateCommittedResource(
+            HeapType.Upload,
+            ResourceDescription.Buffer(vertexBufferSize),
+            ResourceStates.GenericRead);
+
+        ReadOnlySpan<TriangleVertex> triangleVertices =
+        [
+            new TriangleVertex(new Vector3(0f, 0.5f, 0.0f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.0f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.0f), new Vector3(0.0f, 0.0f, 1.0f))
+        ];
+
+        _vertexBuffer.SetData(triangleVertices);
+
+        _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
+        _fenceValues[_frameIndex]++;
+
+        _frameFenceEvent = new UnixAutoResetEvent(false);
+
+        bool exit = false;
+        SDL_Event @event = default;
+        while (!exit)
         {
+            unsafe
+            {
+                while (SDL3.SDL_PollEvent(&@event))
+                {
+                    if (@event.Type == SDL_EventType.SDL_EVENT_QUIT)
+                    {
+                        exit = true;
+                        break;
+                    }
+
+                    if (@event.Type == SDL_EventType.SDL_EVENT_WINDOW_RESIZED)
+                    {
+                        int w = @event.window.data1;
+                        int h = @event.window.data2;
+
+                        Logger.LogInformation($"Resizing to {w}x{h}");
+                        Resize(w, h);
+                    }
+                }
+            }
+
             DrawFrame();
         }
     }
@@ -196,8 +254,6 @@ public class D3D12Renderer : IDisposable
         };
 
         Device.CreateDepthStencilView(depthStencilTexture, viewDesc, _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
-
-        Logger.LogInformation("Created depth stencil and dsv");
     }
 
     private void CreateFrameResources(out ID3D12Resource[] renderTargets)
@@ -213,8 +269,35 @@ public class D3D12Renderer : IDisposable
             Device.CreateRenderTargetView(renderTargets[i], null, rtvHandle);
             rtvHandle += (int)_rtvDescriptorSize;
         }
+    }
 
-        Logger.LogInformation("Created frame resources");
+    // Handle resizing the swapchain, render target views, and depth stencil
+    private void Resize(int width, int height)
+    {
+        WaitIdle();
+
+        for (int i = 0; i < SwapChainBufferCount; i++)
+        {
+            _renderTargets[i].Dispose();
+        }
+        _depthStencilTexture.Dispose();
+
+        SwapChain.ResizeBuffers1(SwapChainBufferCount, (uint)width, (uint)height, Format.R8G8B8A8_UNorm);
+        CreateFrameResources(out _renderTargets);
+        CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
+
+        _frameIndex = SwapChain.CurrentBackBufferIndex;
+    }
+
+    // Waits until the gpu is idle
+    // call before disposing anything or recreating any resources
+    public void WaitIdle()
+    {
+        GraphicsQueue.Signal(_frameFence, _fenceValues[_frameIndex]);
+        _frameFence.SetEventOnCompletion(_fenceValues[_frameIndex], _frameFenceEvent);
+        _frameFenceEvent.WaitOne();
+
+        _fenceValues[_frameIndex]++;
     }
 
     private void DrawFrame()
@@ -227,9 +310,9 @@ public class D3D12Renderer : IDisposable
         _commandList.SetGraphicsRootSignature(_rootSignature);
 
         // Indicate that the back buffer will be used as a render target.
-        _commandList.ResourceBarrierTransition(_renderTargets[_backbufferIndex], ResourceStates.Present, ResourceStates.RenderTarget);
+        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.Present, ResourceStates.RenderTarget);
 
-        CpuDescriptorHandle rtvDescriptor = new(_rtvDescriptorHeap.GetCPUDescriptorHandleForHeapStart(), (int)_backbufferIndex, _rtvDescriptorSize);
+        CpuDescriptorHandle rtvDescriptor = new(_rtvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1(), (int)_frameIndex, _rtvDescriptorSize);
         CpuDescriptorHandle dsvDescriptor = _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
         Color4 clearColor = Colors.CornflowerBlue;
@@ -239,18 +322,18 @@ public class D3D12Renderer : IDisposable
         _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
         _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
-        _commandList.RSSetScissorRect((int)Window.Size.Y, (int)Window.Size.Y);
+        _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-        /*
+
         _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-        uint stride = (uint)sizeof(VertexPositionColor);
+        uint stride = (uint)Unsafe.SizeOf<TriangleVertex>();
         uint vertexBufferSize = 3 * stride;
         _commandList.IASetVertexBuffers(0, new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, stride));
         _commandList.DrawInstanced(3, 1, 0, 0);
-        */
+
 
         // Indicate that the back buffer will now be used to present.
-        _commandList.ResourceBarrierTransition(_renderTargets[_backbufferIndex], ResourceStates.RenderTarget, ResourceStates.Present);
+        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
         _commandList.EndEvent();
         _commandList.Close();
 
@@ -258,35 +341,41 @@ public class D3D12Renderer : IDisposable
         GraphicsQueue.ExecuteCommandList(_commandList);
 
         Result result = SwapChain.Present(1, PresentFlags.None);
-        if (result.Failure
-            && (result.Code == Vortice.DXGI.ResultCode.DeviceRemoved.Code || result.Code == Vortice.DXGI.ResultCode.DeviceReset.Code))
+
+        // Device lost ??
+        if (result.Failure && (result.Code == Vortice.DXGI.ResultCode.DeviceRemoved.Code || result.Code == Vortice.DXGI.ResultCode.DeviceReset.Code))
         {
             //HandleDeviceLost();
-
-            //return false;
             return;
         }
 
-        GraphicsQueue.Signal(_frameFence, ++_frameCount);
+        // Schedule a signal
+        ulong currentFenceValue = _fenceValues[_frameIndex];
+        GraphicsQueue.Signal(_frameFence, currentFenceValue);
 
-        ulong GPUFrameCount = _frameFence.CompletedValue;
+        // Update the frame index
+        _frameIndex = SwapChain.CurrentBackBufferIndex;
 
-        if ((_frameCount - GPUFrameCount) >= SwapChainBufferCount)
+        // Wait until the next frame is ready to be rendered, if we need to
+        if (_frameFence.CompletedValue < _fenceValues[_frameIndex])
         {
-            _frameFence.SetEventOnCompletion(GPUFrameCount + 1, _frameFenceEvent);
+            _frameFence.SetEventOnCompletion(_fenceValues[_frameIndex], _frameFenceEvent);
             _frameFenceEvent.WaitOne();
         }
 
-        _frameIndex = _frameCount % SwapChainBufferCount;
-        _backbufferIndex = SwapChain.CurrentBackBufferIndex;
+        // Set the fence value for the next frame
+        _fenceValues[_frameIndex] = currentFenceValue + 1;
     }
 
     protected virtual void Dispose(bool disposing)
     {
         if (!_disposed)
         {
+            WaitIdle();
+
             Logger.LogInformation($"Disposing {nameof(D3D12Renderer)}");
 
+            _vertexBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
             {
                 _commandAllocators[i].Dispose();
@@ -295,12 +384,15 @@ public class D3D12Renderer : IDisposable
             _depthStencilTexture.Dispose();
             _dsvDescriptorHeap?.Dispose();
             _rtvDescriptorHeap.Dispose();
-
+            _frameFence.Dispose();
+            _commandList.Dispose();
+            _pipelineState.Dispose();
             _rootSignature.Dispose();
             SwapChain.Dispose();
             GraphicsQueue.Dispose();
 
 #if DEBUG
+            // Check and log any unreleased device resources
             uint refCount = Device.Release();
             if (refCount > 0)
             {
@@ -327,4 +419,7 @@ public class D3D12Renderer : IDisposable
         Dispose(disposing: true);
         GC.SuppressFinalize(this);
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    record struct TriangleVertex(Vector3 position, Vector3 color);
 }

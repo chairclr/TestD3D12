@@ -4,6 +4,8 @@ using TestD3D12.Windowing;
 using Vortice.Direct3D;
 using static Vortice.Direct3D12.D3D12;
 
+Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
+
 #if false
 Logger.LogInformation("Adding FirstChanceException handler");
 AppDomain.CurrentDomain.FirstChanceException += static (sender, e) =>

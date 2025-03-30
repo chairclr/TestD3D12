@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using SDL;
 using TestD3D12.Logging;
 using static SDL.SDL3;
@@ -76,6 +77,14 @@ public unsafe class BaseWindow : IDisposable
         if (sdlWindow is null)
         {
             throw new SDLException("Failed to create SDL_Window");
+        }
+
+        uint sex = 0;
+        byte** guh = SDL_Vulkan_GetInstanceExtensions(&sex);
+
+        for (int i = 0; i < sex; i++)
+        {
+            Logger.LogInformation(Marshal.PtrToStringAuto((nint)guh[i]));
         }
 
         return new BaseWindow(sdlWindow);
