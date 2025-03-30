@@ -4,12 +4,14 @@ using TestD3D12.Windowing;
 using Vortice.Direct3D;
 using static Vortice.Direct3D12.D3D12;
 
+#if false
 Logger.LogInformation("Adding FirstChanceException handler");
 AppDomain.CurrentDomain.FirstChanceException += static (sender, e) =>
 {
     Logger.LogWarning($"[FirstChanceException]: {e.Exception}");
     Logger.LogInformation($"SDL_GetError: {SDL.SDL3.SDL_GetError()}");
 };
+#endif
 
 Logger.LogInformation("Checking for D3D12 FeatureLevel 12_0");
 if (!IsSupported(FeatureLevel.Level_12_0))
