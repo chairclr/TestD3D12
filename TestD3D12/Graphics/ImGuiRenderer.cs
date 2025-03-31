@@ -1,13 +1,18 @@
+using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ImGuiNET;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using TestD3D12.Logging;
 using TestD3D12.Platform;
+using Veldrid;
 using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
 using Vortice.DXGI;
+using Vortice.Mathematics;
 using ImDrawIdx = ushort;
 
 namespace TestD3D12.Graphics;
@@ -36,8 +41,6 @@ public unsafe class ImGuiRenderer : IDisposable
 
     private byte* _constantsMemory = null;
 
-    //private readonly Dictionary<nint, id3d12resou> textureResources = new Dictionary<IntPtr, ID3D11ShaderResourceView>();
-
     private bool _disposed;
 
     public ImGuiRenderer(ID3D12Device device, ID3D12CommandQueue graphicsQueue)
@@ -55,7 +58,7 @@ public unsafe class ImGuiRenderer : IDisposable
             | RootSignatureFlags.DenyAmplificationShaderRootAccess
             | RootSignatureFlags.DenyMeshShaderRootAccess;
 
-        RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0));
+        RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0));
 
         RootSignatureDescription1 rootSignatureDesc = new()
         {
@@ -68,7 +71,7 @@ public unsafe class ImGuiRenderer : IDisposable
             ],
             StaticSamplers =
             [
-                new StaticSamplerDescription(SamplerDescription.LinearWrap, ShaderVisibility.Pixel, 0, 0),
+                new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
             ],
         };
 
@@ -99,11 +102,11 @@ public unsafe class ImGuiRenderer : IDisposable
 
         CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
-        SamplerDescription samplerDesc = SamplerDescription.LinearWrap;
-        _device.CreateSampler(ref samplerDesc, resourceHandle);
+        CreateFontsTexture(resourceHandle, out _fontTexture);
         resourceHandle += (int)_resourceDescriptorSize;
 
-        CreateFontsTexture(resourceHandle, out _fontTexture);
+        SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
+        _device.CreateSampler(ref samplerDesc, resourceHandle);
         resourceHandle += (int)_resourceDescriptorSize;
 
         // As defined in Assets/Shaders/Source/ImGui/ImGuiVS.hlsl
@@ -126,7 +129,7 @@ public unsafe class ImGuiRenderer : IDisposable
             SampleMask = uint.MaxValue,
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RasterizerState = RasterizerDescription.CullNone,
-            BlendState = BlendDescription.AlphaBlend,
+            BlendState = BlendDescription.NonPremultiplied,
             // Disable depth and stencil
             DepthStencilState = DepthStencilDescription.Default with
             {
@@ -161,12 +164,13 @@ public unsafe class ImGuiRenderer : IDisposable
 
         using ID3D12Resource uploadBuffer = _device.CreateCommittedResource(
                 HeapType.Upload,
-                ResourceDescription.Buffer(new ResourceAllocationInfo(upload_size, 0)),
+                ResourceDescription.Buffer(upload_size),
                 ResourceStates.GenericRead);
 
         void* mapped;
+        Vortice.Direct3D12.Range readRange = new(0, 0);
         Vortice.Direct3D12.Range range = new(0, upload_size);
-        uploadBuffer.Map(0, range, &mapped);
+        uploadBuffer.Map(0, readRange, &mapped);
 
         for (int y = 0; y < height; y++)
         {
@@ -214,7 +218,9 @@ public unsafe class ImGuiRenderer : IDisposable
 
         _device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
 
-        io.Fonts.SetTexID((nint)_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1().Ptr);
+        nint textureId = (nint)_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1().Ptr;
+        Log.LogInfo($"Setting ImGui font texture id to {textureId}");
+        io.Fonts.SetTexID(textureId);
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
@@ -309,10 +315,13 @@ public unsafe class ImGuiRenderer : IDisposable
         commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(frameIndex * Unsafe.SizeOf<Constants>()));
 
         commandList.SetDescriptorHeaps(_resourceDescriptorHeap);
+        commandList.SetGraphicsRootDescriptorTable(1, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
 
         commandList.IASetVertexBuffers(0, _vertexBufferView!.Value);
         commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         commandList.IASetIndexBuffer(_indexBufferView!.Value);
+
+        commandList.OMSetBlendFactor(Colors.Transparent);
 
         int global_idx_offset = 0;
         int global_vtx_offset = 0;
@@ -343,10 +352,13 @@ public unsafe class ImGuiRenderer : IDisposable
                     RawRect rect = new((int)clip_min.X, (int)clip_min.Y, (int)clip_max.X, (int)clip_max.Y);
                     commandList.RSSetScissorRect(rect);
 
-                    GpuDescriptorHandle descriptorHandle;
-                    descriptorHandle.Ptr = (ulong)cmd.TextureId;
+                    // TODO: User textures
+                    /*GpuDescriptorHandle descriptorHandle = new()
+                    {
+                        Ptr = (ulong)cmd.TextureId
+                    };
 
-                    commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);
+                    commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);*/
                     commandList.DrawIndexedInstanced(cmd.ElemCount, 1, (uint)(cmd.IdxOffset + global_idx_offset), (int)(cmd.VtxOffset + global_vtx_offset), 0);
                 }
             }

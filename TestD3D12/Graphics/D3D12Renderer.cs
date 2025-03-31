@@ -177,6 +177,7 @@ public class D3D12Renderer : IDisposable
         _frameFenceEvent = PlatformHelper.CreateAutoResetEvent(false);
 
         _imGuiContext = ImGui.CreateContext();
+        ImGui.SetCurrentContext(_imGuiContext);
         _imGuiRenderer = new ImGuiRenderer(Device, GraphicsQueue);
 
         bool exit = false;
@@ -212,8 +213,7 @@ public class D3D12Renderer : IDisposable
 
             if (ImGui.Begin("Test Window", ImGuiWindowFlags.AlwaysAutoResize))
             {
-                ImGui.Text("Hello!");
-                ImGui.Button("This is a button");
+                ImGui.Image(0, new Vector2(512, 128));
                 ImGui.End();
             }
 
