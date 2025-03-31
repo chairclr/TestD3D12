@@ -1,8 +1,10 @@
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
 
 namespace TestD3D12.Platform;
 
+[SupportedOSPlatform("linux")]
 public class UnixAutoResetEvent : WaitHandle
 {
     private const int EFD_NONBLOCK = 0x800;
@@ -23,7 +25,7 @@ public class UnixAutoResetEvent : WaitHandle
         int fd = eventfd((uint)(initialState ? 1 : 0), EFD_NONBLOCK | EFD_CLOEXEC);
         if (fd < 0)
         {
-            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Failed to create eventfd.");
+            throw new InvalidOperationException("Failed to create eventfd");
         }
 
         _eventFd = new SafeEventFdHandle(fd);
@@ -33,7 +35,7 @@ public class UnixAutoResetEvent : WaitHandle
     public bool Set()
     {
         ulong value = 1;
-        int result = write(_eventFd.DangerousGetHandle().ToInt32(), ref value, (IntPtr)sizeof(ulong));
+        int result = write(_eventFd.DangerousGetHandle().ToInt32(), ref value, sizeof(ulong));
         return result >= 0;
     }
 
@@ -42,18 +44,25 @@ public class UnixAutoResetEvent : WaitHandle
         int result;
         DateTime startTime = DateTime.UtcNow;
 
+        // Do while loop here because chatgpt said so
+        // it kinda makes sense though so I'll leave it
         do
         {
+            if (_eventFd.IsClosed || _eventFd.IsInvalid)
+            {
+                return false;
+            }
+
             result = read(_eventFd.DangerousGetHandle().ToInt32(), out ulong _, sizeof(ulong));
             if (result >= 0)
             {
                 return true;
             }
 
-            int err = Marshal.GetLastWin32Error();
+            int err = Marshal.GetLastPInvokeError();
             if (err != 11 /*EAGAIN*/ && err != 4 /*EINTR*/)
             {
-                throw new System.ComponentModel.Win32Exception(err, "Failed to read eventfd.");
+                throw new InvalidOperationException("Failed to read eventfd");
             }
 
             if (millisecondsTimeout >= 0 && (DateTime.UtcNow - startTime).TotalMilliseconds >= millisecondsTimeout)

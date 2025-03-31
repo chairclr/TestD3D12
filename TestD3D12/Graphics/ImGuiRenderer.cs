@@ -30,7 +30,7 @@ public unsafe class ImGuiRenderer : IDisposable
     private IndexBufferView? _indexBufferView;
     private uint _indexBufferSize = 2048;
 
-    private ID3D12Resource _fontTexture;
+    private readonly ID3D12Resource _fontTexture;
 
     private readonly ID3D12Resource _constantBuffer;
 
@@ -138,7 +138,6 @@ public unsafe class ImGuiRenderer : IDisposable
         };
 
         _pipelineState = _device.CreateGraphicsPipelineState(psoDesc);
-
     }
 
     // See https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_dx12.cpp
@@ -147,14 +146,16 @@ public unsafe class ImGuiRenderer : IDisposable
         // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data
         const uint D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
 
+
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.GetTexDataAsRGBA32(out byte* pixels, out int width, out int height);
 
+        Log.LogInfo($"Creating {nameof(ImGuiRenderer)} font texture with size {width}x{height}");
         fontTexture = _device.CreateCommittedResource(
                 HeapType.Default,
                 ResourceDescription.Texture2D(Format.R8G8B8A8_UNorm, (uint)width, (uint)height),
                 ResourceStates.CopyDest);
-        fontTexture.Name = "ImGuiRenderer fontTexture";
+        fontTexture.Name = $"{nameof(ImGuiRenderer)} fontTexture";
 
         uint upload_pitch = (uint)((width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u));
         uint upload_size = (uint)(height * upload_pitch);
@@ -183,10 +184,10 @@ public unsafe class ImGuiRenderer : IDisposable
 
         TextureCopyLocation dstLocation = new(fontTexture, 0);
 
-        ID3D12Fence fence = _device.CreateFence(0);
         UnixAutoResetEvent fenceEvent = new(false);
-        ID3D12CommandAllocator commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
-        ID3D12GraphicsCommandList4 commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, commandAllocator, null);
+        using ID3D12Fence fence = _device.CreateFence(0);
+        using ID3D12CommandAllocator commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
+        using ID3D12GraphicsCommandList4 commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, commandAllocator, null);
 
         commandList.CopyTextureRegion(dstLocation, 0, 0, 0, srcLocation);
         commandList.ResourceBarrierTransition(fontTexture, ResourceStates.CopyDest, ResourceStates.PixelShaderResource);
@@ -235,6 +236,7 @@ public unsafe class ImGuiRenderer : IDisposable
 
             uint vertexBufferSizeBytes = _vertexBufferSize * vertexBufferStride;
 
+            Log.LogInfo($"Creating ImGui vertex buffer with size {_vertexBufferSize}");
             _vertexBuffer = _device.CreateCommittedResource(
                 HeapType.Upload,
                 ResourceDescription.Buffer(vertexBufferSizeBytes),
@@ -257,6 +259,7 @@ public unsafe class ImGuiRenderer : IDisposable
 
             uint indexBufferSizeBytes = _indexBufferSize * indexBufferStride;
 
+            Log.LogInfo($"Creating ImGui index buffer with size {_indexBufferSize}");
             _indexBuffer = _device.CreateCommittedResource(
                 HeapType.Upload,
                 ResourceDescription.Buffer(indexBufferSizeBytes),
@@ -325,7 +328,7 @@ public unsafe class ImGuiRenderer : IDisposable
 
                 if (cmd.UserCallback != IntPtr.Zero)
                 {
-                    throw new NotImplementedException("User callbacks not implemented");
+                    Log.LogCrit($"User callback passed to ImGui but not implemented");
                 }
                 else
                 {
@@ -357,6 +360,8 @@ public unsafe class ImGuiRenderer : IDisposable
     {
         if (!_disposed)
         {
+            Log.LogInfo($"Disposing {nameof(ImGuiRenderer)}");
+
             _pipelineState.Dispose();
 
             _device.Release();

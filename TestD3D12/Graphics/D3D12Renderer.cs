@@ -61,6 +61,7 @@ public class D3D12Renderer : IDisposable
     {
         Window = window;
 
+        Log.LogInfo("Creating DXGIFactory");
         DXGIFactory = CreateDXGIFactory2<IDXGIFactory4>(false);
 
         // Device creation
@@ -77,6 +78,8 @@ public class D3D12Renderer : IDisposable
             if (D3D12CreateDevice(adapter, FeatureLevel.Level_11_0, out d3d12Device).Success)
             {
                 adapter.Dispose();
+
+                Log.LogInfo($"Chosing adapter {adapterIndex} for device creation");
                 break;
             }
         }
@@ -90,6 +93,7 @@ public class D3D12Renderer : IDisposable
         Device = d3d12Device;
 
         // Graphics queue
+        Log.LogInfo("Creating main CommandQueue");
         GraphicsQueue = Device.CreateCommandQueue(CommandListType.Direct);
         GraphicsQueue.Name = "Graphics Queue";
 
@@ -231,7 +235,7 @@ public class D3D12Renderer : IDisposable
             SampleDescription = new SampleDescription(1, 0),
         };
 
-        Log.LogInfo($"Creating swapchain with size {swapChainDesc.Width}, {swapChainDesc.Height} and {swapChainDesc.BufferCount} buffers");
+        Log.LogInfo($"Creating swapchain with {swapChainDesc.Width}x{swapChainDesc.Height}, BufferCount = {swapChainDesc.BufferCount}");
 
         using IDXGISwapChain1 swapChain = DXGIFactory.CreateSwapChainForHwnd(GraphicsQueue, Window.WindowHandle, swapChainDesc);
 
@@ -242,8 +246,6 @@ public class D3D12Renderer : IDisposable
 
         swapChain3 = swapChain.QueryInterface<IDXGISwapChain3>();
         backbufferIndex = swapChain3.CurrentBackBufferIndex;
-
-        Log.LogInfo("Created swapchain");
     }
 
     private void CreateDepthStencil(out ID3D12Resource depthStencilTexture, out Format depthStencilFormat)
@@ -259,6 +261,8 @@ public class D3D12Renderer : IDisposable
                 flags: ResourceFlags.AllowDepthStencil);
 
         ClearValue depthOptimizedClearValue = new(depthStencilFormat, 1.0f, 0);
+
+        Log.LogInfo($"Creating depth stencil with {depthStencilDesc.Width}x{depthStencilDesc.Height}");
 
         depthStencilTexture = Device.CreateCommittedResource(
             HeapType.Default,
@@ -281,6 +285,7 @@ public class D3D12Renderer : IDisposable
         CpuDescriptorHandle rtvHandle = _rtvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
         // Create a RTV for buffer in the swapchain
+        Log.LogInfo($"Creating {SwapChainBufferCount} rtvs");
         renderTargets = new ID3D12Resource[SwapChainBufferCount];
         for (uint i = 0; i < SwapChainBufferCount; i++)
         {
@@ -296,12 +301,14 @@ public class D3D12Renderer : IDisposable
     {
         WaitIdle();
 
+        Log.LogInfo("Disposing RTVs and depth stencil");
         for (int i = 0; i < SwapChainBufferCount; i++)
         {
             _renderTargets[i].Dispose();
         }
         _depthStencilTexture.Dispose();
 
+        Log.LogInfo("Resizing swapchain buffers");
         SwapChain.ResizeBuffers1(SwapChainBufferCount, (uint)width, (uint)height, Format.R8G8B8A8_UNorm);
         CreateFrameResources(out _renderTargets);
         CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
@@ -375,6 +382,7 @@ public class D3D12Renderer : IDisposable
         if (result.Failure && (result.Code == Vortice.DXGI.ResultCode.DeviceRemoved.Code || result.Code == Vortice.DXGI.ResultCode.DeviceReset.Code))
         {
             //HandleDeviceLost();
+            Log.LogInfo($"Lost device with code {result.Code}");
             return;
         }
 
@@ -403,6 +411,8 @@ public class D3D12Renderer : IDisposable
             WaitIdle();
 
             Log.LogInfo($"Disposing {nameof(D3D12Renderer)}");
+
+            _imGuiRenderer.Dispose();
 
             _vertexBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
