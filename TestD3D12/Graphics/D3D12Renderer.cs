@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
+using ImGuiNET;
 using SDL;
 using SharpGen.Runtime;
 using TestD3D12.Logging;
@@ -21,9 +22,9 @@ namespace TestD3D12.Graphics;
 
 public class D3D12Renderer : IDisposable
 {
-    public readonly BaseWindow Window;
+    public const int SwapChainBufferCount = 2;
 
-    private const int SwapChainBufferCount = 2;
+    public readonly BaseWindow Window;
 
     public readonly IDXGIFactory4 DXGIFactory;
     public readonly ID3D12Device2 Device;
@@ -47,6 +48,10 @@ public class D3D12Renderer : IDisposable
     private readonly ID3D12GraphicsCommandList4 _commandList;
 
     private readonly ID3D12Resource _vertexBuffer;
+    private readonly VertexBufferView _vertexBufferView;
+
+    private readonly nint _imGuiContext;
+    private readonly ImGuiRenderer _imGuiRenderer;
 
     private readonly ID3D12Fence _frameFence;
     private readonly UnixAutoResetEvent _frameFenceEvent;
@@ -147,7 +152,8 @@ public class D3D12Renderer : IDisposable
         _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[0], _pipelineState);
         _commandList.Close();
 
-        ulong vertexBufferSize = 3 * (ulong)Unsafe.SizeOf<TriangleVertex>();
+        uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
+        uint vertexBufferSize = 3 * vertexBufferStride;
 
         _vertexBuffer = Device.CreateCommittedResource(
             HeapType.Upload,
@@ -162,11 +168,15 @@ public class D3D12Renderer : IDisposable
         ];
 
         _vertexBuffer.SetData(triangleVertices);
+        _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, (uint)vertexBufferSize, vertexBufferStride);
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
         _fenceValues[_frameIndex]++;
 
         _frameFenceEvent = new UnixAutoResetEvent(false);
+
+        _imGuiContext = ImGui.CreateContext();
+        _imGuiRenderer = new ImGuiRenderer(Device);
 
         bool exit = false;
         SDL_Event @event = default;
@@ -191,6 +201,19 @@ public class D3D12Renderer : IDisposable
                         Resize(w, h);
                     }
                 }
+            }
+
+            ImGuiIOPtr io = ImGui.GetIO();
+            io.DisplaySize = Window.Size;
+
+            ImGui.SetCurrentContext(_imGuiContext);
+            ImGui.NewFrame();
+
+            if (ImGui.Begin("Test Window", ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                ImGui.Text("Hello!");
+                ImGui.Button("This is a button");
+                ImGui.End();
             }
 
             DrawFrame();
@@ -321,20 +344,29 @@ public class D3D12Renderer : IDisposable
         _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
         _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
+
         _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
         _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-
         _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-        uint stride = (uint)Unsafe.SizeOf<TriangleVertex>();
-        uint vertexBufferSize = 3 * stride;
-        _commandList.IASetVertexBuffers(0, new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, stride));
+        _commandList.IASetVertexBuffers(0, _vertexBufferView);
         _commandList.DrawInstanced(3, 1, 0, 0);
 
 
         // Indicate that the back buffer will now be used to present.
-        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
+        //_commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
         _commandList.EndEvent();
+
+        ImGui.Render();
+
+        _commandList.BeginEvent("ImGui");
+        _commandList.OMSetRenderTargets(rtvDescriptor, null);
+        _imGuiRenderer.PopulateCommandList(_commandList, _frameIndex, ImGui.GetDrawData());
+        _commandList.EndEvent();
+
+        // Indicate that the back buffer will be used to present
+        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
+
         _commandList.Close();
 
         // Execute the command list.

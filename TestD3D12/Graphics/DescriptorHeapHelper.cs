@@ -22,4 +22,18 @@ public static class DescriptorHeapHelper
             return result;
         }
     }
+
+    public static GpuDescriptorHandle GetGPUDescriptorHandleForHeapStart1(this ID3D12DescriptorHeap heap)
+    {
+        GpuDescriptorHandle result;
+
+        // Fixed behavior of normal Vortice ID3D12DescriptorHeap::GetGPUDescriptorHandleForHeapStart
+        unsafe
+        {
+            void* nativeCall = Pointer.Unbox(getVtbl.Invoke(heap, [10])!);
+
+            ((delegate* unmanaged[Stdcall]<IntPtr, void*, void*>)nativeCall)(heap.NativePointer, &result);
+            return result;
+        }
+    }
 }

@@ -6,4 +6,5 @@ TestD3D12_dxgi.log
 .netcoredbg_hist
 vkd3d-proton.cache
 vkd3d-proton.cache.write
+imgui.ini
 

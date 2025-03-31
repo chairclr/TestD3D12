@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
     <PackageReference Include="ppy.SDL3-CS" Version="2025.220.0" />
     <PackageReference Include="Vortice.Direct3D12" Version="3.6.2" />
   </ItemGroup>
@@ -22,14 +23,14 @@
   <ItemGroup>
     <ShaderFiles Include="Basic/TriangleVS" ShaderProfile="vs_6_0" ShaderEntryPoint="VSMain" />
     <ShaderFiles Include="Basic/TrianglePS" ShaderProfile="ps_6_0" ShaderEntryPoint="PSMain" />
+
+    <ShaderFiles Include="ImGui/ImGuiVS" ShaderProfile="vs_6_0" ShaderEntryPoint="VSMain" />
+    <ShaderFiles Include="ImGui/ImGuiPS" ShaderProfile="ps_6_0" ShaderEntryPoint="PSMain" />
   </ItemGroup>
 
   <Target Name="CompileShaders" BeforeTargets="BeforeBuild">
 
-    <CompileShaderTask
-      ShaderFile="%(ShaderFiles.Identity)"
-      ShaderProfile="%(ShaderFiles.ShaderProfile)"
-      ShaderEntryPoint="%(ShaderFiles.ShaderEntryPoint)" /> 
+    <CompileShaderTask ShaderFile="%(ShaderFiles.Identity)" ShaderProfile="%(ShaderFiles.ShaderProfile)" ShaderEntryPoint="%(ShaderFiles.ShaderEntryPoint)" /> 
 
     <ItemGroup>
       <None Include="$(ProjectDir)Assets\**" CopyToOutputDirectory="PreserveNewest" />
