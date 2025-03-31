@@ -54,8 +54,7 @@ public unsafe class ImGuiRenderer : IDisposable
             [
                 new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
 
-                // TODO: Textures
-                //new(RootParameterType.ShaderResourceView, new RootDescriptor1(0, 0), ShaderVisibility.Pixel),
+                new(RootParameterType.ShaderResourceView, new RootDescriptor1(0, 0), ShaderVisibility.Pixel),
             ],
             StaticSamplers =
             [
@@ -128,7 +127,41 @@ public unsafe class ImGuiRenderer : IDisposable
         _pipelineState = _device.CreateGraphicsPipelineState(psoDesc);
 
         // TODO: Set font texture
-        ImGui.GetIO().Fonts.GetTexDataAsRGBA32(out byte* _, out int _, out int _);
+    }
+
+    // See https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_dx12.cpp
+    private void CreateFontsTexture()
+    {
+        // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data
+        const uint D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
+        const uint D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT = 512;
+
+        ImGuiIOPtr io = ImGui.GetIO();
+        io.Fonts.GetTexDataAsRGBA32(out byte* pixels, out int width, out int height);
+
+        ID3D12Resource fontTexture = _device.CreateCommittedResource(
+                HeapType.Default,
+                ResourceDescription.Texture2D(Format.R8G8B8A8_UNorm, (uint)width, (uint)height),
+                ResourceStates.GenericRead);
+
+        uint upload_pitch = (uint)((width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u));
+        uint upload_size = (uint)(height * upload_pitch);
+
+        ID3D12Resource uploadBuffer = _device.CreateCommittedResource(
+                HeapType.Upload,
+                ResourceDescription.Buffer(new ResourceAllocationInfo(upload_size, 0)),
+                ResourceStates.GenericRead);
+
+        void* mapped;
+        Vortice.Direct3D12.Range range = new(0, upload_size);
+        uploadBuffer.Map(0, range, &mapped);
+
+        for (int y = 0; y < height; y++)
+        {
+            Unsafe.CopyBlock((void*)((nint)mapped + y * upload_pitch), (void*)(pixels + y * width * 4), (uint)(width * 4));
+        }
+
+        uploadBuffer.Unmap(0, range);
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
@@ -256,10 +289,10 @@ public unsafe class ImGuiRenderer : IDisposable
                     commandList.RSSetScissorRect(rect);
 
                     // TODO: texture resources
-                    /*textureResources.TryGetValue(cmd.TextureId, out var texture);
-                    if (texture != null)
-                        ctx.PSSetShaderResources(0, texture);*/
+                    GpuDescriptorHandle descriptorHandle;
+                    descriptorHandle.Ptr = (ulong)cmd.TextureId;
 
+                    commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);
                     commandList.DrawIndexedInstanced(cmd.ElemCount, 1, (uint)(cmd.IdxOffset + global_idx_offset), (int)(cmd.VtxOffset + global_vtx_offset), 0);
                 }
             }
