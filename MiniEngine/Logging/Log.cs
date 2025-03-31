@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
-namespace TestD3D12.Logging;
+namespace MiniEngine.Logging;
 
 public static class Log
 {

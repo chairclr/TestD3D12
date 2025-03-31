@@ -1,4 +1,4 @@
-namespace TestD3D12.Logging;
+namespace MiniEngine.Logging;
 
 public enum LogLevel
 {

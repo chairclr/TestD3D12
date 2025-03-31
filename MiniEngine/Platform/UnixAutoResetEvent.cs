@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
 
-namespace TestD3D12.Platform;
+namespace MiniEngine.Platform;
 
 [SupportedOSPlatform("linux")]
 public class UnixAutoResetEvent : WaitHandle

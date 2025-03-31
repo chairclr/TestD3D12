@@ -1,7 +1,7 @@
 using System.Reflection;
 using Vortice.Direct3D12;
 
-namespace TestD3D12.Graphics;
+namespace MiniEngine.Graphics;
 
 public static class DescriptorHeapHelper
 {

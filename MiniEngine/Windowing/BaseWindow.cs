@@ -1,10 +1,10 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using SDL;
-using TestD3D12.Logging;
+using MiniEngine.Logging;
 using static SDL.SDL3;
 
-namespace TestD3D12.Windowing;
+namespace MiniEngine.Windowing;
 
 public unsafe class BaseWindow : IDisposable
 {

@@ -1,4 +1,4 @@
-namespace TestD3D12.Windowing;
+namespace MiniEngine.Windowing;
 
 /// <summary>
 /// Appends SDL_GetError() to the exception message

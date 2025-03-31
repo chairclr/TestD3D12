@@ -4,10 +4,10 @@ using System.Runtime.InteropServices;
 using ImGuiNET;
 using SDL;
 using SharpGen.Runtime;
-using TestD3D12.Input;
-using TestD3D12.Logging;
-using TestD3D12.Platform;
-using TestD3D12.Windowing;
+using MiniEngine.Input;
+using MiniEngine.Logging;
+using MiniEngine.Platform;
+using MiniEngine.Windowing;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
 using Vortice.Direct3D12.Debug;
@@ -16,7 +16,7 @@ using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
 
-namespace TestD3D12.Graphics;
+namespace MiniEngine.Graphics;
 
 public class D3D12Renderer : IDisposable
 {

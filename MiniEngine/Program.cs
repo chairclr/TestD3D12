@@ -1,6 +1,6 @@
-﻿using TestD3D12.Graphics;
-using TestD3D12.Logging;
-using TestD3D12.Windowing;
+﻿using MiniEngine.Graphics;
+using MiniEngine.Logging;
+using MiniEngine.Windowing;
 using Vortice.Direct3D;
 using static Vortice.Direct3D12.D3D12;
 
@@ -24,7 +24,7 @@ if (!IsSupported(FeatureLevel.Level_12_0))
 Log.LogInfo("Founds support and loaded D3D12 FeatureLevel 12_0");
 
 Log.LogInfo("Creating test window");
-using BaseWindow window = BaseWindow.CreateWindow("D3D12 Test Window", 1280, 720);
+using BaseWindow window = BaseWindow.CreateWindow("MiniEngine Main Window", 1920, 1080);
 Log.LogInfo($"Created test window with handle {window.WindowHandle:X}");
 
 Log.LogInfo($"Creating {nameof(D3D12Renderer)}");

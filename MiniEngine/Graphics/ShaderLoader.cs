@@ -1,4 +1,4 @@
-namespace TestD3D12.Graphics;
+namespace MiniEngine.Graphics;
 
 public static class ShaderLoader
 {

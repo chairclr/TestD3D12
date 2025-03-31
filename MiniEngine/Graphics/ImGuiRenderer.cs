@@ -5,8 +5,8 @@ using System.Runtime.InteropServices;
 using ImGuiNET;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
-using TestD3D12.Logging;
-using TestD3D12.Platform;
+using MiniEngine.Logging;
+using MiniEngine.Platform;
 using Veldrid;
 using Vortice;
 using Vortice.Direct3D;
@@ -15,7 +15,7 @@ using Vortice.DXGI;
 using Vortice.Mathematics;
 using ImDrawIdx = ushort;
 
-namespace TestD3D12.Graphics;
+namespace MiniEngine.Graphics;
 
 public unsafe class ImGuiRenderer : IDisposable
 {

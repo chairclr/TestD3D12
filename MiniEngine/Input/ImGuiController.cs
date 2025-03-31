@@ -1,8 +1,8 @@
 using ImGuiNET;
 using SDL;
-using TestD3D12.Windowing;
+using MiniEngine.Windowing;
 
-namespace TestD3D12.Input;
+namespace MiniEngine.Input;
 
 internal class ImGuiController
 {

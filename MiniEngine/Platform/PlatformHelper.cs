@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace TestD3D12.Platform;
+namespace MiniEngine.Platform;
 
 public static class PlatformHelper
 {
