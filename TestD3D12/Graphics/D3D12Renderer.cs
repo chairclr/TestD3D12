@@ -1,14 +1,11 @@
-using System.ComponentModel;
-using System.Dynamic;
 using System.Numerics;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.Serialization;
 using ImGuiNET;
 using SDL;
 using SharpGen.Runtime;
 using TestD3D12.Logging;
+using TestD3D12.Platform;
 using TestD3D12.Windowing;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
@@ -149,7 +146,7 @@ public class D3D12Renderer : IDisposable
 
         _pipelineState = Device.CreateGraphicsPipelineState(psoDesc);
 
-        _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[0], _pipelineState);
+        _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _pipelineState);
         _commandList.Close();
 
         uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
@@ -176,7 +173,7 @@ public class D3D12Renderer : IDisposable
         _frameFenceEvent = new UnixAutoResetEvent(false);
 
         _imGuiContext = ImGui.CreateContext();
-        _imGuiRenderer = new ImGuiRenderer(Device);
+        _imGuiRenderer = new ImGuiRenderer(Device, GraphicsQueue);
 
         bool exit = false;
         SDL_Event @event = default;

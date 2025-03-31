@@ -1,8 +1,7 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-using TestD3D12.Logging;
 
-namespace TestD3D12;
+namespace TestD3D12.Platform;
 
 public class UnixAutoResetEvent : WaitHandle
 {

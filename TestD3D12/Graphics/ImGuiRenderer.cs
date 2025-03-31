@@ -2,7 +2,8 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ImGuiNET;
-using Microsoft.VisualBasic;
+using TestD3D12.Logging;
+using TestD3D12.Platform;
 using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
@@ -14,6 +15,8 @@ namespace TestD3D12.Graphics;
 public unsafe class ImGuiRenderer : IDisposable
 {
     private readonly ID3D12Device _device;
+    private readonly ID3D12CommandQueue _graphicsQueue;
+
     private readonly ID3D12RootSignature _rootSignature;
     private readonly ID3D12PipelineState _pipelineState;
 
@@ -27,6 +30,8 @@ public unsafe class ImGuiRenderer : IDisposable
     private IndexBufferView? _indexBufferView;
     private uint _indexBufferSize = 2048;
 
+    private ID3D12Resource _fontTexture;
+
     private readonly ID3D12Resource _constantBuffer;
 
     private byte* _constantsMemory = null;
@@ -35,11 +40,13 @@ public unsafe class ImGuiRenderer : IDisposable
 
     private bool _disposed;
 
-    public ImGuiRenderer(ID3D12Device device)
+    public ImGuiRenderer(ID3D12Device device, ID3D12CommandQueue graphicsQueue)
     {
         _device = device;
+        _graphicsQueue = graphicsQueue;
 
         _device.AddRef();
+        _graphicsQueue.AddRef();
 
         RootSignatureFlags rootSignatureFlags = RootSignatureFlags.AllowInputAssemblerInputLayout
             | RootSignatureFlags.DenyHullShaderRootAccess
@@ -47,6 +54,9 @@ public unsafe class ImGuiRenderer : IDisposable
             | RootSignatureFlags.DenyGeometryShaderRootAccess
             | RootSignatureFlags.DenyAmplificationShaderRootAccess
             | RootSignatureFlags.DenyMeshShaderRootAccess;
+
+        RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0));
+
         RootSignatureDescription1 rootSignatureDesc = new()
         {
             Flags = rootSignatureFlags,
@@ -54,12 +64,12 @@ public unsafe class ImGuiRenderer : IDisposable
             [
                 new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
 
-                new(RootParameterType.ShaderResourceView, new RootDescriptor1(0, 0), ShaderVisibility.Pixel),
+                new(srvTable, ShaderVisibility.Pixel)
             ],
             StaticSamplers =
             [
                 new StaticSamplerDescription(SamplerDescription.LinearWrap, ShaderVisibility.Pixel, 0, 0),
-            ]
+            ],
         };
 
         _rootSignature = _device.CreateRootSignature(rootSignatureDesc);
@@ -91,6 +101,9 @@ public unsafe class ImGuiRenderer : IDisposable
 
         SamplerDescription samplerDesc = SamplerDescription.LinearWrap;
         _device.CreateSampler(ref samplerDesc, resourceHandle);
+        resourceHandle += (int)_resourceDescriptorSize;
+
+        CreateFontsTexture(resourceHandle, out _fontTexture);
         resourceHandle += (int)_resourceDescriptorSize;
 
         // As defined in Assets/Shaders/Source/ImGui/ImGuiVS.hlsl
@@ -126,28 +139,27 @@ public unsafe class ImGuiRenderer : IDisposable
 
         _pipelineState = _device.CreateGraphicsPipelineState(psoDesc);
 
-        // TODO: Set font texture
     }
 
     // See https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_dx12.cpp
-    private void CreateFontsTexture()
+    private void CreateFontsTexture(CpuDescriptorHandle resourceHandle, out ID3D12Resource fontTexture)
     {
         // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data
         const uint D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
-        const uint D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT = 512;
 
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.GetTexDataAsRGBA32(out byte* pixels, out int width, out int height);
 
-        ID3D12Resource fontTexture = _device.CreateCommittedResource(
+        fontTexture = _device.CreateCommittedResource(
                 HeapType.Default,
                 ResourceDescription.Texture2D(Format.R8G8B8A8_UNorm, (uint)width, (uint)height),
-                ResourceStates.GenericRead);
+                ResourceStates.CopyDest);
+        fontTexture.Name = "ImGuiRenderer fontTexture";
 
         uint upload_pitch = (uint)((width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u));
         uint upload_size = (uint)(height * upload_pitch);
 
-        ID3D12Resource uploadBuffer = _device.CreateCommittedResource(
+        using ID3D12Resource uploadBuffer = _device.CreateCommittedResource(
                 HeapType.Upload,
                 ResourceDescription.Buffer(new ResourceAllocationInfo(upload_size, 0)),
                 ResourceStates.GenericRead);
@@ -162,6 +174,48 @@ public unsafe class ImGuiRenderer : IDisposable
         }
 
         uploadBuffer.Unmap(0, range);
+
+        TextureCopyLocation srcLocation = new(uploadBuffer, new PlacedSubresourceFootPrint()
+        {
+            Offset = 0,
+            Footprint = new SubresourceFootPrint(Format.R8G8B8A8_UNorm, (uint)width, (uint)height, 1, upload_pitch)
+        });
+
+        TextureCopyLocation dstLocation = new(fontTexture, 0);
+
+        ID3D12Fence fence = _device.CreateFence(0);
+        UnixAutoResetEvent fenceEvent = new(false);
+        ID3D12CommandAllocator commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
+        ID3D12GraphicsCommandList4 commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, commandAllocator, null);
+
+        commandList.CopyTextureRegion(dstLocation, 0, 0, 0, srcLocation);
+        commandList.ResourceBarrierTransition(fontTexture, ResourceStates.CopyDest, ResourceStates.PixelShaderResource);
+        commandList.Close();
+
+        // Execute the command list.
+        _graphicsQueue.ExecuteCommandList(commandList);
+        _graphicsQueue.Signal(fence, 1);
+
+        fence.SetEventOnCompletion(1, fenceEvent);
+        fenceEvent.WaitOne();
+
+        Logger.LogInformation("Created ImGui font texture and uploaded to gpu");
+
+        ShaderResourceViewDescription srvDesc = new()
+        {
+            Format = Format.R8G8B8A8_UNorm,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0
+            },
+            Shader4ComponentMapping = ShaderComponentMapping.Default
+        };
+
+        _device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
+
+        io.Fonts.SetTexID((nint)resourceHandle.Ptr);
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
@@ -292,7 +346,8 @@ public unsafe class ImGuiRenderer : IDisposable
                     GpuDescriptorHandle descriptorHandle;
                     descriptorHandle.Ptr = (ulong)cmd.TextureId;
 
-                    commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);
+
+                    //commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);
                     commandList.DrawIndexedInstanced(cmd.ElemCount, 1, (uint)(cmd.IdxOffset + global_idx_offset), (int)(cmd.VtxOffset + global_vtx_offset), 0);
                 }
             }
