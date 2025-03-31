@@ -184,7 +184,7 @@ public unsafe class ImGuiRenderer : IDisposable
 
         TextureCopyLocation dstLocation = new(fontTexture, 0);
 
-        UnixAutoResetEvent fenceEvent = new(false);
+        WaitHandle fenceEvent = PlatformHelper.CreateAutoResetEvent(false);
         using ID3D12Fence fence = _device.CreateFence(0);
         using ID3D12CommandAllocator commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
         using ID3D12GraphicsCommandList4 commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, commandAllocator, null);

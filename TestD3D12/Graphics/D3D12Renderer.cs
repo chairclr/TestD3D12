@@ -51,7 +51,7 @@ public class D3D12Renderer : IDisposable
     private readonly ImGuiRenderer _imGuiRenderer;
 
     private readonly ID3D12Fence _frameFence;
-    private readonly UnixAutoResetEvent _frameFenceEvent;
+    private readonly WaitHandle _frameFenceEvent;
     private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
     private uint _frameIndex;
 
@@ -169,12 +169,12 @@ public class D3D12Renderer : IDisposable
         ];
 
         _vertexBuffer.SetData(triangleVertices);
-        _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, (uint)vertexBufferSize, vertexBufferStride);
+        _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
         _fenceValues[_frameIndex]++;
 
-        _frameFenceEvent = new UnixAutoResetEvent(false);
+        _frameFenceEvent = PlatformHelper.CreateAutoResetEvent(false);
 
         _imGuiContext = ImGui.CreateContext();
         _imGuiRenderer = new ImGuiRenderer(Device, GraphicsQueue);
