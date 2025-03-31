@@ -218,9 +218,7 @@ public unsafe class ImGuiRenderer : IDisposable
 
         _device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
 
-        nint textureId = (nint)_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1().Ptr;
-        Log.LogInfo($"Setting ImGui font texture id to {textureId}");
-        io.Fonts.SetTexID(textureId);
+        io.Fonts.SetTexID((nint)_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1().Ptr);
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)

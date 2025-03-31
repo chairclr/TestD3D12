@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using ImGuiNET;
 using SDL;
 using SharpGen.Runtime;
+using TestD3D12.Input;
 using TestD3D12.Logging;
 using TestD3D12.Platform;
 using TestD3D12.Windowing;
@@ -47,8 +48,8 @@ public class D3D12Renderer : IDisposable
     private readonly ID3D12Resource _vertexBuffer;
     private readonly VertexBufferView _vertexBufferView;
 
-    private readonly nint _imGuiContext;
     private readonly ImGuiRenderer _imGuiRenderer;
+    private readonly ImGuiController _imGuiController;
 
     private readonly ID3D12Fence _frameFence;
     private readonly WaitHandle _frameFenceEvent;
@@ -176,9 +177,10 @@ public class D3D12Renderer : IDisposable
 
         _frameFenceEvent = PlatformHelper.CreateAutoResetEvent(false);
 
-        _imGuiContext = ImGui.CreateContext();
-        ImGui.SetCurrentContext(_imGuiContext);
+        nint imGuiContext = ImGui.CreateContext();
+        ImGui.SetCurrentContext(imGuiContext);
         _imGuiRenderer = new ImGuiRenderer(Device, GraphicsQueue);
+        _imGuiController = new ImGuiController(Window, imGuiContext);
 
         bool exit = false;
         SDL_Event @event = default;
@@ -199,23 +201,23 @@ public class D3D12Renderer : IDisposable
                         int w = @event.window.data1;
                         int h = @event.window.data2;
 
-                        Log.LogInfo($"Resizing to {w}x{h}");
                         Resize(w, h);
+                    }
+
+                    if (_imGuiController.HandleEvent(@event))
+                    {
+                        continue;
                     }
                 }
             }
 
-            ImGuiIOPtr io = ImGui.GetIO();
-            io.DisplaySize = Window.Size;
+            _imGuiController.NewFrame();
 
-            ImGui.SetCurrentContext(_imGuiContext);
-            ImGui.NewFrame();
-
-            if (ImGui.Begin("Test Window", ImGuiWindowFlags.AlwaysAutoResize))
+            if (ImGui.Begin("Test Window"))
             {
                 ImGui.Image(0, new Vector2(512, 128));
-                ImGui.End();
             }
+            ImGui.End();
 
             DrawFrame();
         }
@@ -299,6 +301,8 @@ public class D3D12Renderer : IDisposable
     // Handle resizing the swapchain, render target views, and depth stencil
     private void Resize(int width, int height)
     {
+        Log.LogInfo($"Resizing to {width}x{height}");
+
         WaitIdle();
 
         Log.LogInfo("Disposing RTVs and depth stencil");
