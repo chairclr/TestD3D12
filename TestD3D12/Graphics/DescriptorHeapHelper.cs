@@ -18,7 +18,7 @@ public static class DescriptorHeapHelper
         {
             void* nativeCall = Pointer.Unbox(getVtbl.Invoke(heap, [9])!);
 
-            ((delegate* unmanaged[Stdcall]<IntPtr, void*, void*>)nativeCall)(heap.NativePointer, &result);
+            ((delegate* unmanaged[Stdcall]<nint, void*, void*>)nativeCall)(heap.NativePointer, &result);
             return result;
         }
     }
@@ -32,7 +32,7 @@ public static class DescriptorHeapHelper
         {
             void* nativeCall = Pointer.Unbox(getVtbl.Invoke(heap, [10])!);
 
-            ((delegate* unmanaged[Stdcall]<IntPtr, void*, void*>)nativeCall)(heap.NativePointer, &result);
+            ((delegate* unmanaged[Stdcall]<nint, void*, void*>)nativeCall)(heap.NativePointer, &result);
             return result;
         }
     }
