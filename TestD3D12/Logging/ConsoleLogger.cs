@@ -1,14 +1,13 @@
 namespace TestD3D12.Logging;
 
-internal class ConsoleLogger : ILogger
+internal class ConsoleLogger : Logger
 {
     private static readonly Lock _consoleLogLock = new();
 
-    public void Log(LogLevel level, string? message)
+    protected override void Log(LogLevel level, string caller, string? message)
     {
         ConsoleColor color = GetColorForLogLevel(level);
-
-        string formattedMessage = $"[{DateTime.Now:HH:mm:ss}.{DateTime.Now:fff}] [{level}]{new string(' ', 11 - level.ToString().Length)}: {message}";
+        string formattedMessage = $"[{caller}/{level}]: {message}";
 
         using (_consoleLogLock.EnterScope())
         {
@@ -18,11 +17,10 @@ internal class ConsoleLogger : ILogger
         }
     }
 
-    public void Log(LogLevel level, Exception? exception)
+    protected override void Log(LogLevel level, string caller, Exception? exception)
     {
         ConsoleColor color = GetColorForLogLevel(level);
-
-        string formattedMessage = $"[{DateTime.Now:HH:mm:ss}.{DateTime.Now:fff}] [{level}]{new string(' ', 11 - level.ToString().Length)}  {exception}";
+        string formattedMessage = $"[{caller}/{level}]: {exception}";
 
         using (_consoleLogLock.EnterScope())
         {
@@ -36,9 +34,9 @@ internal class ConsoleLogger : ILogger
     {
         return level switch
         {
-            LogLevel.Information => ConsoleColor.Gray,
-            LogLevel.Warning => ConsoleColor.Yellow,
-            LogLevel.Critical => ConsoleColor.Red,
+            LogLevel.Info => ConsoleColor.DarkGray,
+            LogLevel.Warn => ConsoleColor.Yellow,
+            LogLevel.Crit => ConsoleColor.Red,
             _ => ConsoleColor.Gray
         };
     }

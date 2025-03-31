@@ -79,14 +79,6 @@ public unsafe class BaseWindow : IDisposable
             throw new SDLException("Failed to create SDL_Window");
         }
 
-        uint sex = 0;
-        byte** guh = SDL_Vulkan_GetInstanceExtensions(&sex);
-
-        for (int i = 0; i < sex; i++)
-        {
-            Logger.LogInformation(Marshal.PtrToStringAuto((nint)guh[i]));
-        }
-
         return new BaseWindow(sdlWindow);
     }
 
@@ -94,7 +86,7 @@ public unsafe class BaseWindow : IDisposable
     {
         if (!_disposed)
         {
-            Logger.LogInformation($"Destroying SDL Window with handle {WindowHandle:X}");
+            Log.LogInfo("Disposing BaseWindow");
             SDL_DestroyWindow(SDLWindowHandle);
 
             _disposed = true;

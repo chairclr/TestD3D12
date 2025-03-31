@@ -83,7 +83,7 @@ public class D3D12Renderer : IDisposable
 
         if (d3d12Device == null)
         {
-            Logger.LogCritical("Failed to create D3D12Device");
+            Log.LogCrit("Failed to create D3D12Device");
             throw new NotSupportedException();
         }
 
@@ -194,7 +194,7 @@ public class D3D12Renderer : IDisposable
                         int w = @event.window.data1;
                         int h = @event.window.data2;
 
-                        Logger.LogInformation($"Resizing to {w}x{h}");
+                        Log.LogInfo($"Resizing to {w}x{h}");
                         Resize(w, h);
                     }
                 }
@@ -231,19 +231,19 @@ public class D3D12Renderer : IDisposable
             SampleDescription = new SampleDescription(1, 0),
         };
 
-        Logger.LogInformation($"Creating swapchain with size {swapChainDesc.Width}, {swapChainDesc.Height} and {swapChainDesc.BufferCount} buffers");
+        Log.LogInfo($"Creating swapchain with size {swapChainDesc.Width}, {swapChainDesc.Height} and {swapChainDesc.BufferCount} buffers");
 
         using IDXGISwapChain1 swapChain = DXGIFactory.CreateSwapChainForHwnd(GraphicsQueue, Window.WindowHandle, swapChainDesc);
 
         if (DXGIFactory.MakeWindowAssociation(Window.WindowHandle, WindowAssociationFlags.IgnoreAltEnter).Failure)
         {
-            Logger.LogCritical("Failed to make window association");
+            Log.LogCrit("Failed to make window association");
         }
 
         swapChain3 = swapChain.QueryInterface<IDXGISwapChain3>();
         backbufferIndex = swapChain3.CurrentBackBufferIndex;
 
-        Logger.LogInformation("Created swapchain");
+        Log.LogInfo("Created swapchain");
     }
 
     private void CreateDepthStencil(out ID3D12Resource depthStencilTexture, out Format depthStencilFormat)
@@ -402,7 +402,7 @@ public class D3D12Renderer : IDisposable
         {
             WaitIdle();
 
-            Logger.LogInformation($"Disposing {nameof(D3D12Renderer)}");
+            Log.LogInfo($"Disposing {nameof(D3D12Renderer)}");
 
             _vertexBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
@@ -425,7 +425,7 @@ public class D3D12Renderer : IDisposable
             uint refCount = Device.Release();
             if (refCount > 0)
             {
-                Logger.LogWarning($"There are {refCount} unreleased references left on the device");
+                Log.LogWarn($"There are {refCount} unreleased references left on the device");
 
                 ID3D12DebugDevice? d3d12DebugDevice = Device.QueryInterfaceOrNull<ID3D12DebugDevice>();
                 if (d3d12DebugDevice is not null)

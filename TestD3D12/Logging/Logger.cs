@@ -1,53 +1,46 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace TestD3D12.Logging;
 
-public class Logger
+public abstract class Logger
 {
-    public static ILogger CurrentLogger { get; private set; } = new ConsoleLogger();
+    protected abstract void Log(LogLevel level, string caller, string? message);
+    protected abstract void Log(LogLevel level, string caller, Exception? exception);
 
-    public static void Log(LogLevel level, string? message)
+    public void LogInfo(string? message, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.Log(level, message);
+        Log(LogLevel.Info, caller, message);
     }
 
-    public static void Log(LogLevel level, Exception? exception)
+    public void LogInfo(Exception? exception, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.Log(level, exception);
+        Log(LogLevel.Info, caller, exception);
     }
 
-    public static void LogInformation(string? message)
+    public void LogWarn(string? message, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.LogInformation(message);
+        Log(LogLevel.Warn, caller, message);
     }
 
-    public static void LogInformation(Exception? exception)
+    public void LogWarn(Exception? exception, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.LogInformation(exception);
+        Log(LogLevel.Warn, caller, exception);
     }
 
-    public static void LogWarning(string? message)
+    public void LogCrit(string? message, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.LogWarning(message);
+        Log(LogLevel.Crit, caller, message);
     }
 
-    public static void LogWarning(Exception? exception)
+    public void LogCrit(string? message, StackTrace stackTrace, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.LogWarning(exception);
+        Log(LogLevel.Crit, caller, message);
+        Log(LogLevel.Crit, caller, $"Stack trace:\n{stackTrace}");
     }
 
-    public static void LogCritical(string? message)
+    public void LogCrit(Exception? exception, [CallerMemberName] string caller = "")
     {
-        CurrentLogger.LogCritical(message);
-    }
-
-    public static void LogCritical(string? message, StackTrace stackTrace)
-    {
-        CurrentLogger.LogCritical(message, stackTrace);
-    }
-
-    public static void LogCritical(Exception? exception)
-    {
-        CurrentLogger.LogCritical(exception);
+        Log(LogLevel.Crit, caller, exception);
     }
 }

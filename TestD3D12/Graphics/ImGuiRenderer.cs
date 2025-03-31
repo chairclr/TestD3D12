@@ -196,10 +196,9 @@ public unsafe class ImGuiRenderer : IDisposable
         _graphicsQueue.ExecuteCommandList(commandList);
         _graphicsQueue.Signal(fence, 1);
 
+        // Set the fence event and wait for the command list execution to finish
         fence.SetEventOnCompletion(1, fenceEvent);
         fenceEvent.WaitOne();
-
-        Logger.LogInformation("Created ImGui font texture and uploaded to gpu");
 
         ShaderResourceViewDescription srvDesc = new()
         {
@@ -208,14 +207,14 @@ public unsafe class ImGuiRenderer : IDisposable
             Texture2D = new()
             {
                 MipLevels = 1,
-                MostDetailedMip = 0
+                MostDetailedMip = 0,
             },
-            Shader4ComponentMapping = ShaderComponentMapping.Default
+            Shader4ComponentMapping = ShaderComponentMapping.Default,
         };
 
         _device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
 
-        io.Fonts.SetTexID((nint)resourceHandle.Ptr);
+        io.Fonts.SetTexID((nint)_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1().Ptr);
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
@@ -342,12 +341,10 @@ public unsafe class ImGuiRenderer : IDisposable
                     RawRect rect = new((int)clip_min.X, (int)clip_min.Y, (int)clip_max.X, (int)clip_max.Y);
                     commandList.RSSetScissorRect(rect);
 
-                    // TODO: texture resources
                     GpuDescriptorHandle descriptorHandle;
                     descriptorHandle.Ptr = (ulong)cmd.TextureId;
 
-
-                    //commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);
+                    commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);
                     commandList.DrawIndexedInstanced(cmd.ElemCount, 1, (uint)(cmd.IdxOffset + global_idx_offset), (int)(cmd.VtxOffset + global_vtx_offset), 0);
                 }
             }
