@@ -146,7 +146,6 @@ public unsafe class ImGuiRenderer : IDisposable
         // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data
         const uint D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
 
-
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.GetTexDataAsRGBA32(out byte* pixels, out int width, out int height);
 
@@ -362,8 +361,17 @@ public unsafe class ImGuiRenderer : IDisposable
         {
             Log.LogInfo($"Disposing {nameof(ImGuiRenderer)}");
 
+            // TODO: Figure out if we need to unmap _constantsMemory?
+            _constantBuffer.Dispose();
+            _fontTexture.Dispose();
+            _indexBuffer?.Dispose();
+            _vertexBuffer?.Dispose();
+            _resourceDescriptorHeap.Dispose();
+
+            _rootSignature.Dispose();
             _pipelineState.Dispose();
 
+            _graphicsQueue.Release();
             _device.Release();
 
             _disposed = true;
