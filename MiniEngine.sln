@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestD3D12", "TestD3D12\TestD3D12.csproj", "{10AA7AF6-DE2E-4207-AAD0-738D4D3B947B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniEngine", "MiniEngine\MiniEngine.csproj", "{EBB68B58-11B8-4402-B07E-88EDA1915948}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -14,9 +14,9 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{10AA7AF6-DE2E-4207-AAD0-738D4D3B947B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{10AA7AF6-DE2E-4207-AAD0-738D4D3B947B}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{10AA7AF6-DE2E-4207-AAD0-738D4D3B947B}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{10AA7AF6-DE2E-4207-AAD0-738D4D3B947B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EBB68B58-11B8-4402-B07E-88EDA1915948}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EBB68B58-11B8-4402-B07E-88EDA1915948}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EBB68B58-11B8-4402-B07E-88EDA1915948}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EBB68B58-11B8-4402-B07E-88EDA1915948}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

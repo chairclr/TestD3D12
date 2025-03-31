@@ -93,8 +93,7 @@ public class D3D12Renderer : IDisposable
 
         Device = d3d12Device;
 
-        // Graphics queue
-        Log.LogInfo("Creating main CommandQueue");
+        Log.LogInfo("Creating main GraphicsQueue");
         GraphicsQueue = Device.CreateCommandQueue(CommandListType.Direct);
         GraphicsQueue.Name = "Graphics Queue";
 
@@ -170,6 +169,7 @@ public class D3D12Renderer : IDisposable
         ];
 
         _vertexBuffer.SetData(triangleVertices);
+        // TODO: Figure out if this should be created every frame
         _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
@@ -204,6 +204,7 @@ public class D3D12Renderer : IDisposable
                         Resize(w, h);
                     }
 
+                    // TODO: Figure out more stuff with input stealing
                     if (_imGuiController.HandleEvent(@event))
                     {
                         continue;
