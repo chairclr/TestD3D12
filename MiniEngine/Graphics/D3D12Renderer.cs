@@ -478,6 +478,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             _imGuiRenderer.Dispose();
 
+            _constantBuffer.Dispose();
             _vertexBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
             {
