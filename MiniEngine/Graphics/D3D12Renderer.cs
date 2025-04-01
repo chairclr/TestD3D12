@@ -30,6 +30,8 @@ public unsafe class D3D12Renderer : IDisposable
     public readonly ID3D12CommandQueue GraphicsQueue;
     public readonly IDXGISwapChain3 SwapChain;
 
+    public readonly D3D12CopyManager CopyManager;
+
     private readonly ID3D12DescriptorHeap _rtvDescriptorHeap;
     private readonly uint _rtvDescriptorSize;
     private ID3D12Resource[] _renderTargets;
@@ -100,6 +102,8 @@ public unsafe class D3D12Renderer : IDisposable
         Log.LogInfo("Creating main GraphicsQueue");
         GraphicsQueue = Device.CreateCommandQueue(CommandListType.Direct);
         GraphicsQueue.Name = "Graphics Queue";
+
+        CopyManager = new(Device, GraphicsQueue);
 
         CreateSwapChain(out SwapChain, out _frameIndex);
 
@@ -208,7 +212,7 @@ public unsafe class D3D12Renderer : IDisposable
 
         nint imGuiContext = ImGui.CreateContext();
         ImGui.SetCurrentContext(imGuiContext);
-        _imGuiRenderer = new ImGuiRenderer(Device, GraphicsQueue);
+        _imGuiRenderer = new ImGuiRenderer(this);
         _imGuiController = new ImGuiController(Window, imGuiContext);
 
         Stopwatch deltaTimeWatch = new();
@@ -476,6 +480,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             Log.LogInfo($"Disposing {nameof(D3D12Renderer)}");
 
+            CopyManager.Dispose();
             _imGuiRenderer.Dispose();
 
             _constantBuffer.Dispose();

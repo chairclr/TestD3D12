@@ -3,7 +3,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ImGuiNET;
 using MiniEngine.Logging;
-using MiniEngine.Platform;
 using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
@@ -15,8 +14,7 @@ namespace MiniEngine.Graphics;
 
 public unsafe class ImGuiRenderer : IDisposable
 {
-    private readonly ID3D12Device _device;
-    private readonly ID3D12CommandQueue _graphicsQueue;
+    private readonly D3D12Renderer _renderer;
 
     private readonly ID3D12RootSignature _rootSignature;
     private readonly ID3D12PipelineState _pipelineState;
@@ -37,13 +35,9 @@ public unsafe class ImGuiRenderer : IDisposable
 
     private bool _disposed;
 
-    public ImGuiRenderer(ID3D12Device device, ID3D12CommandQueue graphicsQueue)
+    public ImGuiRenderer(D3D12Renderer renderer)
     {
-        _device = device;
-        _graphicsQueue = graphicsQueue;
-
-        _device.AddRef();
-        _graphicsQueue.AddRef();
+        _renderer = renderer;
 
         RootSignatureFlags rootSignatureFlags = RootSignatureFlags.AllowInputAssemblerInputLayout
             | RootSignatureFlags.DenyHullShaderRootAccess
@@ -69,7 +63,7 @@ public unsafe class ImGuiRenderer : IDisposable
             ],
         };
 
-        _rootSignature = _device.CreateRootSignature(rootSignatureDesc);
+        _rootSignature = _renderer.Device.CreateRootSignature(rootSignatureDesc);
 
         // ImGui needs two main shader resources:
         // Pixel shader:
@@ -77,13 +71,13 @@ public unsafe class ImGuiRenderer : IDisposable
         // 2. Texture sampler (LinearWrap)
         //
         // The vertex shader has a constant buffer, but we don't need to make a descriptor heap entry for it
-        _resourceDescriptorHeap = _device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 2, DescriptorHeapFlags.ShaderVisible));
-        _resourceDescriptorSize = _device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+        _resourceDescriptorHeap = _renderer.Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 2, DescriptorHeapFlags.ShaderVisible));
+        _resourceDescriptorSize = _renderer.Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
         // We actually have a separate cbuffer for each swapchain buffer
         // Later we update only the cbuffer for the current frameIndex
         uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * D3D12Renderer.SwapChainBufferCount);
-        _constantBuffer = _device.CreateCommittedResource(
+        _constantBuffer = _renderer.Device.CreateCommittedResource(
                 HeapType.Upload,
                 ResourceDescription.Buffer(cbufferSize),
                 ResourceStates.GenericRead);
@@ -100,13 +94,13 @@ public unsafe class ImGuiRenderer : IDisposable
         resourceHandle += (int)_resourceDescriptorSize;
 
         SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
-        _device.CreateSampler(ref samplerDesc, resourceHandle);
+        _renderer.Device.CreateSampler(ref samplerDesc, resourceHandle);
         resourceHandle += (int)_resourceDescriptorSize;
 
         _renderBuffers = new RenderBuffers[D3D12Renderer.SwapChainBufferCount];
         for (int i = 0; i < D3D12Renderer.SwapChainBufferCount; i++)
         {
-            _renderBuffers[i] = new RenderBuffers(_device);
+            _renderBuffers[i] = new RenderBuffers(_renderer.Device);
         }
 
         // As defined in Assets/Shaders/Source/ImGui/ImGuiVS.hlsl
@@ -140,69 +134,22 @@ public unsafe class ImGuiRenderer : IDisposable
             SampleDescription = SampleDescription.Default,
         };
 
-        _pipelineState = _device.CreateGraphicsPipelineState(psoDesc);
+        _pipelineState = _renderer.Device.CreateGraphicsPipelineState(psoDesc);
     }
 
-    // See https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_dx12.cpp
     private void CreateFontsTexture(CpuDescriptorHandle resourceHandle, out ID3D12Resource fontTexture, out nint fontTextureId)
     {
-        // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data
-        const uint D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
-
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.GetTexDataAsRGBA32(out byte* pixels, out int width, out int height);
 
         Log.LogInfo($"Creating {nameof(ImGuiRenderer)} font texture with size {width}x{height}");
-        fontTexture = _device.CreateCommittedResource(
+        fontTexture = _renderer.Device.CreateCommittedResource(
                 HeapType.Default,
                 ResourceDescription.Texture2D(Format.R8G8B8A8_UNorm, (uint)width, (uint)height),
                 ResourceStates.CopyDest);
         fontTexture.Name = $"{nameof(ImGuiRenderer)} fontTexture";
 
-        uint upload_pitch = (uint)((width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u));
-        uint upload_size = (uint)(height * upload_pitch);
-
-        using ID3D12Resource uploadBuffer = _device.CreateCommittedResource(
-                HeapType.Upload,
-                ResourceDescription.Buffer(upload_size),
-                ResourceStates.GenericRead);
-
-        void* mapped;
-        Vortice.Direct3D12.Range readRange = new(0, 0);
-        Vortice.Direct3D12.Range range = new(0, upload_size);
-        uploadBuffer.Map(0, readRange, &mapped);
-
-        for (int y = 0; y < height; y++)
-        {
-            Unsafe.CopyBlock((void*)((nint)mapped + y * upload_pitch), (void*)(pixels + y * width * 4), (uint)(width * 4));
-        }
-
-        uploadBuffer.Unmap(0, range);
-
-        TextureCopyLocation srcLocation = new(uploadBuffer, new PlacedSubresourceFootPrint()
-        {
-            Offset = 0,
-            Footprint = new SubresourceFootPrint(Format.R8G8B8A8_UNorm, (uint)width, (uint)height, 1, upload_pitch)
-        });
-
-        TextureCopyLocation dstLocation = new(fontTexture, 0);
-
-        WaitHandle fenceEvent = PlatformHelper.CreateAutoResetEvent(false);
-        using ID3D12Fence fence = _device.CreateFence(0);
-        using ID3D12CommandAllocator commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
-        using ID3D12GraphicsCommandList4 commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, commandAllocator, null);
-
-        commandList.CopyTextureRegion(dstLocation, 0, 0, 0, srcLocation);
-        commandList.ResourceBarrierTransition(fontTexture, ResourceStates.CopyDest, ResourceStates.PixelShaderResource);
-        commandList.Close();
-
-        // Execute the command list.
-        _graphicsQueue.ExecuteCommandList(commandList);
-        _graphicsQueue.Signal(fence, 1);
-
-        // Set the fence event and wait for the command list execution to finish
-        fence.SetEventOnCompletion(1, fenceEvent);
-        fenceEvent.WaitOne();
+        _renderer.CopyManager.QueueTexture2DUpload(fontTexture, Format.R8G8B8A8_UNorm, pixels, (uint)width, (uint)height).Wait();
 
         ShaderResourceViewDescription srvDesc = new()
         {
@@ -216,7 +163,7 @@ public unsafe class ImGuiRenderer : IDisposable
             Shader4ComponentMapping = ShaderComponentMapping.Default,
         };
 
-        _device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
+        _renderer.Device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
 
         // TODO: Maybe dynamically allocate from the descriptor heap?
         fontTextureId = _currentImTextureId++;
@@ -317,9 +264,6 @@ public unsafe class ImGuiRenderer : IDisposable
 
             _rootSignature.Dispose();
             _pipelineState.Dispose();
-
-            _graphicsQueue.Release();
-            _device.Release();
 
             _disposed = true;
         }
