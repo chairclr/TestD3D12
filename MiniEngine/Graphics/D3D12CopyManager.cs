@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using MiniEngine.Logging;
 using Vortice.Direct3D12;
 using Vortice.DXGI;
 
@@ -21,6 +22,7 @@ public class D3D12CopyManager : IDisposable
     {
         _device = device;
         _commandQueue = commandQueue;
+
         _device.AddRef();
         _commandQueue.AddRef();
     }
@@ -37,6 +39,8 @@ public class D3D12CopyManager : IDisposable
 
         uint uploadPitch = (width * pixelWidth + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);
         uint uploadSize = height * uploadPitch;
+
+        Log.LogInfo($"Width: {width}, height: {height}, format: {format}");
 
         ManualResetEventSlim uploadFinishedEvent = new(false);
 
@@ -71,6 +75,7 @@ public class D3D12CopyManager : IDisposable
         }
 
         // No buffer with enough size or that wasn't busy was found
+        Log.LogInfo($"No free staging context with at least size {uploadSize} found, allocating new staging context");
         StagingContext newContext = new(_device, _commandQueue, uploadSize);
 
         // Add the new context to be reused
@@ -129,20 +134,18 @@ public class D3D12CopyManager : IDisposable
         commandList.ResourceBarrierTransition(destResource, ResourceStates.CopyDest, ResourceStates.PixelShaderResource);
     }
 
-    private void PopulateCommandListTexture2D()
-    {
-
-    }
-
     protected virtual void Dispose(bool disposing)
     {
         if (!_disposed)
         {
+            Log.LogInfo($"Disposing {nameof(D3D12CopyManager)}");
+
             foreach (StagingContext stagingContext in _stagingContexts)
             {
                 stagingContext.Dispose();
             }
 
+            _commandQueue.Release();
             _device.Release();
 
             _disposed = true;
@@ -177,12 +180,10 @@ public class D3D12CopyManager : IDisposable
         {
             _device = device;
             _commandQueue = commandQueue;
-            _device.AddRef();
-            _commandQueue.AddRef();
 
             Fence = _device.CreateFence(FenceValue);
-            _commandAllocator = _device.CreateCommandAllocator(CommandListType.Copy);
-            _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Copy, _commandAllocator, null);
+            _commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
+            _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocator, null);
             _commandList.Close();
 
             BufferSize = size;
@@ -215,13 +216,12 @@ public class D3D12CopyManager : IDisposable
             Task.Run(() =>
                 {
                     // Wait until the command fence is set
-                    while (Fence.CompletedValue < FenceValue)
-                    {
-                        Thread.Yield();
-                    }
+                    WaitIdle();
 
                     // Reset _isExecuting to 0 (false) atomically
                     Interlocked.Exchange(ref _isExecuting, 0);
+
+                    Log.LogInfo("Staging context finished upload");
 
                     uploadCompletedEvent.Set();
                 });
@@ -229,16 +229,24 @@ public class D3D12CopyManager : IDisposable
             return true;
         }
 
+        public void WaitIdle()
+        {
+            while (Fence.CompletedValue < FenceValue)
+            {
+                Thread.Yield();
+            }
+        }
+
         protected virtual void Dispose(bool disposing)
         {
             if (!_disposed)
             {
+                WaitIdle();
+
                 _commandAllocator.Dispose();
+                _commandList.Dispose();
                 UploadBuffer.Dispose();
                 Fence.Dispose();
-
-                _commandQueue.Release();
-                _device.Release();
 
                 _disposed = true;
             }
