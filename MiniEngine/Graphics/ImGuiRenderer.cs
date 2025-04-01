@@ -26,11 +26,14 @@ public unsafe class ImGuiRenderer : IDisposable
 
     private readonly RenderBuffers[] _renderBuffers;
 
-    private readonly ID3D12Resource _fontTexture;
-
     private readonly ID3D12Resource _constantBuffer;
-
     private byte* _constantsMemory = null;
+
+    private nint _currentImTextureId = 0;
+    private readonly Dictionary<nint, uint> _imTextureMap = [];
+
+    private readonly nint _fontTextureId;
+    private readonly ID3D12Resource _fontTexture;
 
     private bool _disposed;
 
@@ -93,7 +96,7 @@ public unsafe class ImGuiRenderer : IDisposable
 
         CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
-        CreateFontsTexture(resourceHandle, out _fontTexture);
+        CreateFontsTexture(resourceHandle, out _fontTexture, out _fontTextureId);
         resourceHandle += (int)_resourceDescriptorSize;
 
         SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
@@ -141,7 +144,7 @@ public unsafe class ImGuiRenderer : IDisposable
     }
 
     // See https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_dx12.cpp
-    private void CreateFontsTexture(CpuDescriptorHandle resourceHandle, out ID3D12Resource fontTexture)
+    private void CreateFontsTexture(CpuDescriptorHandle resourceHandle, out ID3D12Resource fontTexture, out nint fontTextureId)
     {
         // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data
         const uint D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
@@ -215,7 +218,10 @@ public unsafe class ImGuiRenderer : IDisposable
 
         _device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
 
-        io.Fonts.SetTexID((nint)_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1().Ptr);
+        // TODO: Maybe dynamically allocate from the descriptor heap?
+        fontTextureId = _currentImTextureId++;
+        _imTextureMap.Add(fontTextureId, 1);
+        io.Fonts.SetTexID(fontTextureId);
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
@@ -239,13 +245,14 @@ public unsafe class ImGuiRenderer : IDisposable
         commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(frameIndex * Unsafe.SizeOf<Constants>()));
 
         commandList.SetDescriptorHeaps(_resourceDescriptorHeap);
-        commandList.SetGraphicsRootDescriptorTable(1, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
 
         commandList.IASetVertexBuffers(0, renderBuffers.VertexBufferView);
         commandList.IASetIndexBuffer(renderBuffers.IndexBufferView);
         commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
 
         commandList.OMSetBlendFactor(Colors.Transparent);
+
+        nint lastTextureId = -1;
 
         int global_idx_offset = 0;
         int global_vtx_offset = 0;
@@ -276,13 +283,13 @@ public unsafe class ImGuiRenderer : IDisposable
                     RawRect rect = new((int)clip_min.X, (int)clip_min.Y, (int)clip_max.X, (int)clip_max.Y);
                     commandList.RSSetScissorRect(rect);
 
-                    // TODO: User textures
-                    /*GpuDescriptorHandle descriptorHandle = new()
+                    // Optimization to only set the descriptor table index when the texture id changes
+                    if (cmd.TextureId != lastTextureId)
                     {
-                        Ptr = (ulong)cmd.TextureId
-                    };
+                        commandList.SetGraphicsRootDescriptorTable(_imTextureMap[cmd.TextureId], _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
+                        lastTextureId = cmd.TextureId;
+                    }
 
-                    commandList.SetGraphicsRootDescriptorTable(1, descriptorHandle);*/
                     commandList.DrawIndexedInstanced(cmd.ElemCount, 1, (uint)(cmd.IdxOffset + global_idx_offset), (int)(cmd.VtxOffset + global_vtx_offset), 0);
                 }
             }
