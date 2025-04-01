@@ -170,7 +170,7 @@ public class D3D12Renderer : IDisposable
         ];
 
         _vertexBuffer.SetData(triangleVertices);
-        // TODO: Figure out if this should be created every frame
+        // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
         _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
