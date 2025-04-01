@@ -1,13 +1,9 @@
-using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ImGuiNET;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using MiniEngine.Logging;
 using MiniEngine.Platform;
-using Veldrid;
 using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
@@ -28,12 +24,7 @@ public unsafe class ImGuiRenderer : IDisposable
     private readonly ID3D12DescriptorHeap _resourceDescriptorHeap;
     private readonly uint _resourceDescriptorSize;
 
-    private ID3D12Resource? _vertexBuffer;
-    private VertexBufferView? _vertexBufferView;
-    private uint _vertexBufferSize = 2048;
-    private ID3D12Resource? _indexBuffer;
-    private IndexBufferView? _indexBufferView;
-    private uint _indexBufferSize = 2048;
+    private readonly RenderBuffers[] _renderBuffers;
 
     private readonly ID3D12Resource _fontTexture;
 
@@ -108,6 +99,12 @@ public unsafe class ImGuiRenderer : IDisposable
         SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
         _device.CreateSampler(ref samplerDesc, resourceHandle);
         resourceHandle += (int)_resourceDescriptorSize;
+
+        _renderBuffers = new RenderBuffers[D3D12Renderer.SwapChainBufferCount];
+        for (int i = 0; i < D3D12Renderer.SwapChainBufferCount; i++)
+        {
+            _renderBuffers[i] = new RenderBuffers(_device);
+        }
 
         // As defined in Assets/Shaders/Source/ImGui/ImGuiVS.hlsl
         InputElementDescription[] inputElementDescs =
@@ -223,80 +220,9 @@ public unsafe class ImGuiRenderer : IDisposable
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
     {
-        uint vertexBufferStride = (uint)Unsafe.SizeOf<ImDrawVert>();
-        uint indexBufferStride = (uint)Unsafe.SizeOf<ImDrawIdx>();
+        RenderBuffers renderBuffers = _renderBuffers[frameIndex];
 
-        // Vertex buffer creation
-        if (_vertexBuffer == null || _vertexBufferSize < data.TotalVtxCount)
-        {
-            _vertexBuffer?.Dispose();
-
-            // Double the number of verts until we have enough
-            while (_vertexBufferSize < data.TotalVtxCount)
-            {
-                _vertexBufferSize *= 2;
-            }
-
-            uint vertexBufferSizeBytes = _vertexBufferSize * vertexBufferStride;
-
-            Log.LogInfo($"Creating ImGui vertex buffer with size {_vertexBufferSize}");
-            _vertexBuffer = _device.CreateCommittedResource(
-                HeapType.Upload,
-                ResourceDescription.Buffer(vertexBufferSizeBytes),
-                ResourceStates.GenericRead);
-
-            // I guess this doesn't need to be disposed?
-            _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSizeBytes, vertexBufferStride);
-        }
-
-        // Index buffer creation
-        if (_indexBuffer == null || _indexBufferSize < data.TotalIdxCount)
-        {
-            _indexBuffer?.Dispose();
-
-            // Double the number of indicies until we have enough
-            while (_indexBufferSize < data.TotalIdxCount)
-            {
-                _indexBufferSize *= 2;
-            }
-
-            uint indexBufferSizeBytes = _indexBufferSize * indexBufferStride;
-
-            Log.LogInfo($"Creating ImGui index buffer with size {_indexBufferSize}");
-            _indexBuffer = _device.CreateCommittedResource(
-                HeapType.Upload,
-                ResourceDescription.Buffer(indexBufferSizeBytes),
-                ResourceStates.GenericRead);
-
-            // I guess this doesn't need to be disposed?
-            _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSizeBytes, Format.R16_UInt);
-        }
-
-        // We only copy verts if there's any to draw
-        if (data.TotalVtxCount > 0)
-        {
-            ImDrawVert* vertexResource = _vertexBuffer.Map<ImDrawVert>(0);
-            ImDrawIdx* indexResource = _indexBuffer.Map<ImDrawIdx>(0);
-
-            ImDrawVert* vertexDst = vertexResource;
-            ImDrawIdx* indexDst = indexResource;
-            for (int n = 0; n < data.CmdListsCount; n++)
-            {
-                ImDrawListPtr cmdList = data.CmdLists[n];
-
-                uint vertexBytes = (uint)(cmdList.VtxBuffer.Size * Unsafe.SizeOf<ImDrawVert>());
-                uint indexBytes = (uint)(cmdList.IdxBuffer.Size * Unsafe.SizeOf<ImDrawIdx>());
-
-                Unsafe.CopyBlock(vertexDst, (void*)cmdList.VtxBuffer.Data, vertexBytes);
-                Unsafe.CopyBlock(indexDst, (void*)cmdList.IdxBuffer.Data, indexBytes);
-
-                vertexDst += cmdList.VtxBuffer.Size;
-                indexDst += cmdList.IdxBuffer.Size;
-            }
-
-            _vertexBuffer.Unmap(0, new Vortice.Direct3D12.Range(0, (nuint)(vertexDst - vertexResource)));
-            _indexBuffer.Unmap(0, new Vortice.Direct3D12.Range(0, (nuint)(indexDst - indexResource)));
-        }
+        renderBuffers.UpdateBuffers(data);
 
         // Create the projection matrix and then copy it to the mapped part of memory for the current frameIndex
         // as mentioned before, every frame that can be in flight gets its own constant buffer
@@ -315,9 +241,9 @@ public unsafe class ImGuiRenderer : IDisposable
         commandList.SetDescriptorHeaps(_resourceDescriptorHeap);
         commandList.SetGraphicsRootDescriptorTable(1, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
 
-        commandList.IASetVertexBuffers(0, _vertexBufferView!.Value);
+        commandList.IASetVertexBuffers(0, renderBuffers.VertexBufferView);
+        commandList.IASetIndexBuffer(renderBuffers.IndexBufferView);
         commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-        commandList.IASetIndexBuffer(_indexBufferView!.Value);
 
         commandList.OMSetBlendFactor(Colors.Transparent);
 
@@ -374,8 +300,12 @@ public unsafe class ImGuiRenderer : IDisposable
             // TODO: Figure out if we need to unmap _constantsMemory?
             _constantBuffer.Dispose();
             _fontTexture.Dispose();
-            _indexBuffer?.Dispose();
-            _vertexBuffer?.Dispose();
+
+            foreach (RenderBuffers renderBuffers in _renderBuffers)
+            {
+                renderBuffers.Dispose();
+            }
+
             _resourceDescriptorHeap.Dispose();
 
             _rootSignature.Dispose();
@@ -396,4 +326,113 @@ public unsafe class ImGuiRenderer : IDisposable
 
     [StructLayout(LayoutKind.Sequential)]
     private record struct Constants(Matrix4x4 ProjectionMatrix);
+
+    private class RenderBuffers : IDisposable
+    {
+        private readonly ID3D12Device _device;
+
+        private ID3D12Resource? _vertexBuffer;
+        private uint _vertexBufferSize = 2048;
+        private ID3D12Resource? _indexBuffer;
+        private uint _indexBufferSize = 2048;
+
+        private bool _disposed;
+
+        public VertexBufferView VertexBufferView => new(_vertexBuffer!.GPUVirtualAddress, (uint)Unsafe.SizeOf<ImDrawVert>() * _vertexBufferSize, (uint)Unsafe.SizeOf<ImDrawVert>());
+        public IndexBufferView IndexBufferView => new(_indexBuffer!.GPUVirtualAddress, (uint)Unsafe.SizeOf<ImDrawIdx>() * _indexBufferSize, Format.R16_UInt);
+
+        public RenderBuffers(ID3D12Device device)
+        {
+            _device = device;
+        }
+
+        public void UpdateBuffers(ImDrawDataPtr data)
+        {
+            uint vertexBufferStride = (uint)Unsafe.SizeOf<ImDrawVert>();
+            uint indexBufferStride = (uint)Unsafe.SizeOf<ImDrawIdx>();
+
+            // Vertex buffer creation
+            if (_vertexBuffer == null || _vertexBufferSize < data.TotalVtxCount)
+            {
+                _vertexBuffer?.Dispose();
+
+                // Double the number of verts until we have enough
+                while (_vertexBufferSize < data.TotalVtxCount)
+                {
+                    _vertexBufferSize *= 2;
+                }
+
+                uint vertexBufferSizeBytes = _vertexBufferSize * vertexBufferStride;
+
+                Log.LogInfo($"Creating ImGui vertex buffer with size {_vertexBufferSize}");
+                _vertexBuffer = _device.CreateCommittedResource(
+                    HeapType.Upload,
+                    ResourceDescription.Buffer(vertexBufferSizeBytes),
+                    ResourceStates.GenericRead);
+            }
+
+            // Index buffer creation
+            if (_indexBuffer == null || _indexBufferSize < data.TotalIdxCount)
+            {
+                _indexBuffer?.Dispose();
+
+                // Double the number of indicies until we have enough
+                while (_indexBufferSize < data.TotalIdxCount)
+                {
+                    _indexBufferSize *= 2;
+                }
+
+                uint indexBufferSizeBytes = _indexBufferSize * indexBufferStride;
+
+                Log.LogInfo($"Creating ImGui index buffer with size {_indexBufferSize}");
+                _indexBuffer = _device.CreateCommittedResource(
+                    HeapType.Upload,
+                    ResourceDescription.Buffer(indexBufferSizeBytes),
+                    ResourceStates.GenericRead);
+            }
+
+            // We only copy verts if there's any to draw
+            if (data.TotalVtxCount > 0)
+            {
+                ImDrawVert* vertexResource = _vertexBuffer.Map<ImDrawVert>(0);
+                ImDrawIdx* indexResource = _indexBuffer.Map<ImDrawIdx>(0);
+
+                ImDrawVert* vertexDst = vertexResource;
+                ImDrawIdx* indexDst = indexResource;
+                for (int n = 0; n < data.CmdListsCount; n++)
+                {
+                    ImDrawListPtr cmdList = data.CmdLists[n];
+
+                    uint vertexBytes = (uint)(cmdList.VtxBuffer.Size * Unsafe.SizeOf<ImDrawVert>());
+                    uint indexBytes = (uint)(cmdList.IdxBuffer.Size * Unsafe.SizeOf<ImDrawIdx>());
+
+                    Unsafe.CopyBlock(vertexDst, (void*)cmdList.VtxBuffer.Data, vertexBytes);
+                    Unsafe.CopyBlock(indexDst, (void*)cmdList.IdxBuffer.Data, indexBytes);
+
+                    vertexDst += cmdList.VtxBuffer.Size;
+                    indexDst += cmdList.IdxBuffer.Size;
+                }
+
+                _vertexBuffer.Unmap(0, new Vortice.Direct3D12.Range(0, (nuint)(vertexDst - vertexResource)));
+                _indexBuffer.Unmap(0, new Vortice.Direct3D12.Range(0, (nuint)(indexDst - indexResource)));
+            }
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                _vertexBuffer?.Dispose();
+                _indexBuffer?.Dispose();
+
+                _disposed = true;
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
+        }
+    }
 }

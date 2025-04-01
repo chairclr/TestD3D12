@@ -1,7 +1,5 @@
 using ImGuiNET;
-
 using MiniEngine.Windowing;
-
 using SDL;
 
 namespace MiniEngine.Input;
@@ -24,6 +22,11 @@ internal class ImGuiController
 
         ImGui.SetCurrentContext(_imGuiContext);
         ImGui.NewFrame();
+    }
+
+    public void EndFrame()
+    {
+        ImGui.EndFrame();
     }
 
     public bool HandleEvent(SDL_Event @event)

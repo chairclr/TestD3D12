@@ -1,13 +1,14 @@
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ImGuiNET;
-using SDL;
-using SharpGen.Runtime;
 using MiniEngine.Input;
 using MiniEngine.Logging;
 using MiniEngine.Platform;
 using MiniEngine.Windowing;
+using SDL;
+using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
 using Vortice.Direct3D12.Debug;
@@ -182,10 +183,27 @@ public class D3D12Renderer : IDisposable
         _imGuiRenderer = new ImGuiRenderer(Device, GraphicsQueue);
         _imGuiController = new ImGuiController(Window, imGuiContext);
 
+        Stopwatch deltaTimeWatch = new();
+
         bool exit = false;
         SDL_Event @event = default;
         while (!exit)
         {
+            deltaTimeWatch.Stop();
+
+            float deltaTime = (float)deltaTimeWatch.Elapsed.TotalSeconds;
+
+            if (deltaTime <= 0)
+            {
+                deltaTime = 1f / 60f;
+            }
+
+            deltaTimeWatch.Restart();
+
+            ImGuiIOPtr io = ImGui.GetIO();
+
+            io.DeltaTime = deltaTime;
+
             unsafe
             {
                 while (SDL3.SDL_PollEvent(&@event))
@@ -216,9 +234,12 @@ public class D3D12Renderer : IDisposable
 
             if (ImGui.Begin("Test Window"))
             {
+                ImGui.Text($"FPS {io.Framerate}");
                 ImGui.Image(0, new Vector2(512, 128));
             }
             ImGui.End();
+
+            _imGuiController.EndFrame();
 
             DrawFrame();
         }
