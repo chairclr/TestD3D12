@@ -181,8 +181,9 @@ public class D3D12CopyManager : IDisposable
             _commandQueue.AddRef();
 
             Fence = _device.CreateFence(FenceValue);
-            _commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
+            _commandAllocator = _device.CreateCommandAllocator(CommandListType.Copy);
             _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Copy, _commandAllocator, null);
+            _commandList.Close();
 
             BufferSize = size;
 
