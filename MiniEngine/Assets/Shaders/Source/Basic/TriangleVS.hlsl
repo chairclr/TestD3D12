@@ -1,10 +1,15 @@
 #include "Common.hlsl"
 
+cbuffer constants : register(b0)
+{
+    column_major float4x4 ProjectionMatrix; 
+};
+
 PS_INPUT VSMain(VS_INPUT input)
 {
     PS_INPUT output;
     
-    float4 worldPosition = float4(input.pos, 1.0);
+    float4 worldPosition = mul(ProjectionMatrix, float4(input.pos, 1.0));
     
     output.pos = worldPosition;
     output.color = input.color;

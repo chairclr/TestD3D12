@@ -19,7 +19,7 @@ using static Vortice.DXGI.DXGI;
 
 namespace MiniEngine.Graphics;
 
-public class D3D12Renderer : IDisposable
+public unsafe class D3D12Renderer : IDisposable
 {
     public const int SwapChainBufferCount = 2;
 
@@ -48,6 +48,9 @@ public class D3D12Renderer : IDisposable
 
     private readonly ID3D12Resource _vertexBuffer;
     private readonly VertexBufferView _vertexBufferView;
+
+    private readonly ID3D12Resource _constantBuffer;
+    private byte* _constantsMemory = null;
 
     private readonly ImGuiRenderer _imGuiRenderer;
     private readonly ImGuiController _imGuiController;
@@ -120,9 +123,34 @@ public class D3D12Renderer : IDisposable
             | RootSignatureFlags.DenyGeometryShaderRootAccess
             | RootSignatureFlags.DenyAmplificationShaderRootAccess
             | RootSignatureFlags.DenyMeshShaderRootAccess;
-        RootSignatureDescription1 rootSignatureDesc = new(rootSignatureFlags);
+        RootSignatureDescription1 rootSignatureDesc = new()
+        {
+            Flags = rootSignatureFlags,
+            Parameters =
+            [
+                new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
+            ],
+            StaticSamplers =
+            [
+                // Fill with samplers in the future ;)
+            ],
+        };
 
         _rootSignature = Device.CreateRootSignature(rootSignatureDesc);
+
+        // We actually have a separate cbuffer for each swapchain buffer
+        // Later we update only the cbuffer for the current frameIndex
+        uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * D3D12Renderer.SwapChainBufferCount);
+        _constantBuffer = Device.CreateCommittedResource(
+                HeapType.Upload,
+                ResourceDescription.Buffer(cbufferSize),
+                ResourceStates.GenericRead);
+
+        // Map the entire _constantBuffer, and d3d stores the pointer to that in _constantsMemory
+        fixed (void* pMemory = &_constantsMemory)
+        {
+            _constantBuffer.Map(0, pMemory);
+        }
 
         InputElementDescription[] inputElementDescs =
         [
@@ -141,7 +169,7 @@ public class D3D12Renderer : IDisposable
             InputLayout = new InputLayoutDescription(inputElementDescs),
             SampleMask = uint.MaxValue,
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
-            RasterizerState = RasterizerDescription.CullCounterClockwise,
+            RasterizerState = RasterizerDescription.CullNone,
             BlendState = BlendDescription.Opaque,
             DepthStencilState = DepthStencilDescription.Default,
             RenderTargetFormats = [Format.R8G8B8A8_UNorm],
@@ -164,9 +192,9 @@ public class D3D12Renderer : IDisposable
 
         ReadOnlySpan<TriangleVertex> triangleVertices =
         [
-            new TriangleVertex(new Vector3(0f, 0.5f, 0.0f), new Vector3(1.0f, 0.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.0f), new Vector3(0.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.0f), new Vector3(0.0f, 0.0f, 1.0f))
+            new TriangleVertex(new Vector3(100 + Window.Size.X / 4f, 100 + Window.Size.Y / 4f + Window.Size.Y / 4f, 0.0f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new TriangleVertex(new Vector3(100 + Window.Size.X / 4f + Window.Size.X / 4f, 100 + Window.Size.Y / 4f + Window.Size.Y / -4f, 0.0f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(100 + Window.Size.X / 4f + Window.Size.X / -4f, 100 + Window.Size.Y / 4f + Window.Size.Y / -4f, 0.0f), new Vector3(0.0f, 0.0f, 1.0f))
         ];
 
         _vertexBuffer.SetData(triangleVertices);
@@ -355,6 +383,14 @@ public class D3D12Renderer : IDisposable
 
     private void DrawFrame()
     {
+        // Create the projection matrix and then copy it to the mapped part of memory for the current frameIndex
+        // as mentioned before, every frame that can be in flight gets its own constant buffer
+        //
+        // This could maybe be simplified so that there's only one constant buffer, but idk; the directx samples do it like this
+        Constants constants = new(Matrix4x4.CreateOrthographicOffCenter(0f, Window.Size.X, Window.Size.Y, 0.0f, -1.0f, 1.0f));
+        void* dest = _constantsMemory + (Unsafe.SizeOf<Constants>() * _frameIndex);
+        Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
+
         _commandAllocators[_frameIndex].Reset();
         _commandList.Reset(_commandAllocators[_frameIndex], _pipelineState);
         _commandList.BeginEvent("Frame");
@@ -374,6 +410,8 @@ public class D3D12Renderer : IDisposable
         _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
         _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
+        // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
+        _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
 
         _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
         _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
@@ -487,4 +525,7 @@ public class D3D12Renderer : IDisposable
 
     [StructLayout(LayoutKind.Sequential)]
     record struct TriangleVertex(Vector3 position, Vector3 color);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private record struct Constants(Matrix4x4 ProjectionMatrix);
 }

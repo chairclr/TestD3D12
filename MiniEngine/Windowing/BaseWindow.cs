@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
-using SDL;
 using MiniEngine.Logging;
+using SDL;
 using static SDL.SDL3;
 
 namespace MiniEngine.Windowing;

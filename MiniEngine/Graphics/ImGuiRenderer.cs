@@ -376,6 +376,8 @@ public unsafe class ImGuiRenderer : IDisposable
                     HeapType.Upload,
                     ResourceDescription.Buffer(vertexBufferSizeBytes),
                     ResourceStates.GenericRead);
+
+                _vertexBuffer.Name = $"{nameof(ImGuiRenderer)} {nameof(_vertexBuffer)}";
             }
 
             // Index buffer creation
@@ -396,6 +398,8 @@ public unsafe class ImGuiRenderer : IDisposable
                     HeapType.Upload,
                     ResourceDescription.Buffer(indexBufferSizeBytes),
                     ResourceStates.GenericRead);
+
+                _indexBuffer.Name = $"{nameof(ImGuiRenderer)} {nameof(_indexBuffer)}";
             }
 
             // We only copy verts if there's any to draw
