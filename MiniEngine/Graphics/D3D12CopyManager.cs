@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using MiniEngine.Logging;
+using MiniEngine.Platform;
 using Vortice.Direct3D12;
 using Vortice.DXGI;
 
@@ -32,7 +33,7 @@ public class D3D12CopyManager : IDisposable
     ///
     /// Also transitions the resoures from <paramref name="before"/> to <paramref name="after"/>. Specify ResourceStates.None for either if this is not desired.
     /// </summary>
-    public unsafe ManualResetEventSlim QueueTexture2DUpload(ID3D12Resource destResource, Format format, byte* data, uint width, uint height, ResourceStates before = ResourceStates.CopyDest, ResourceStates after = ResourceStates.PixelShaderResource)
+    public unsafe WaitHandle QueueTexture2DUpload(ID3D12Resource destResource, Format format, byte* data, uint width, uint height, ResourceStates before = ResourceStates.CopyDest, ResourceStates after = ResourceStates.PixelShaderResource)
     {
         // It's actually in bits, so / 8  for bytes
         uint pixelWidth = format.GetBitsPerPixel() / 8;
@@ -41,8 +42,6 @@ public class D3D12CopyManager : IDisposable
         uint uploadSize = height * uploadPitch;
 
         Log.LogInfo($"Width: {width}, height: {height}, format: {format}");
-
-        ManualResetEventSlim uploadFinishedEvent = new(false);
 
         // Look for a buffer that can handle the upload and succeedes in starting the upload (isn't busy)
         using (_stagingContextLock.EnterScope())
@@ -64,11 +63,11 @@ public class D3D12CopyManager : IDisposable
                             pixelWidth,
                             uploadPitch,
                             uploadSize,
-                            context), uploadFinishedEvent);
+                            context));
 
                     if (startedUpload)
                     {
-                        return uploadFinishedEvent;
+                        return context.FenceEvent;
                     }
                 }
             }
@@ -97,9 +96,9 @@ public class D3D12CopyManager : IDisposable
                 pixelWidth,
                 uploadPitch,
                 uploadSize,
-                newContext), uploadFinishedEvent);
+                newContext));
 
-        return uploadFinishedEvent;
+        return newContext.FenceEvent;
     }
 
     private static unsafe void UploadActionTexture2D(ID3D12GraphicsCommandList4 commandList, ID3D12Resource destResource, Format format, byte* data, uint width, uint height, ResourceStates before, ResourceStates after, uint pixelWidth, uint uploadPitch, uint uploadSize, StagingContext context)
@@ -166,13 +165,15 @@ public class D3D12CopyManager : IDisposable
         private readonly ID3D12CommandAllocator _commandAllocator;
         private readonly ID3D12GraphicsCommandList4 _commandList;
 
+        private readonly ID3D12Fence _fence;
+        private ulong _fenceValue;
+
         private int _isExecuting = 0;
 
-        public ID3D12Resource UploadBuffer { get; private set; }
-        public ID3D12Fence Fence { get; private set; }
+        public ID3D12Resource UploadBuffer { get; }
+        public ulong BufferSize { get; }
 
-        public ulong FenceValue { get; private set; }
-        public ulong BufferSize { get; private set; }
+        public WaitHandle FenceEvent { get; }
 
         private bool _disposed;
 
@@ -181,7 +182,8 @@ public class D3D12CopyManager : IDisposable
             _device = device;
             _commandQueue = commandQueue;
 
-            Fence = _device.CreateFence(FenceValue);
+            _fence = _device.CreateFence(_fenceValue);
+            FenceEvent = PlatformHelper.CreateAutoResetEvent(false);
             _commandAllocator = _device.CreateCommandAllocator(CommandListType.Direct);
             _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocator, null);
             _commandList.Close();
@@ -194,7 +196,7 @@ public class D3D12CopyManager : IDisposable
                     ResourceStates.GenericRead);
         }
 
-        public bool Upload(Action<ID3D12GraphicsCommandList4> uploadAction, ManualResetEventSlim uploadCompletedEvent)
+        public bool Upload(Action<ID3D12GraphicsCommandList4> uploadAction)
         {
             // If we're busy or have no work to do, don't do anything
             if (Interlocked.CompareExchange(ref _isExecuting, 1, 0) == 1)
@@ -209,21 +211,23 @@ public class D3D12CopyManager : IDisposable
 
             _commandList.Close();
 
-            FenceValue++;
+            _fenceValue++;
             _commandQueue.ExecuteCommandList(_commandList);
-            _commandQueue.Signal(Fence, FenceValue);
 
             Task.Run(() =>
                 {
                     // Wait until the command fence is set
                     WaitIdle();
 
+                    // Resignal FenceEvent for anyone calling
+                    // also do that before resetting _isExecuting
+                    _commandQueue.Signal(_fence, _fenceValue);
+                    _fence.SetEventOnCompletion(_fenceValue, FenceEvent);
+
                     // Reset _isExecuting to 0 (false) atomically
                     Interlocked.Exchange(ref _isExecuting, 0);
 
                     Log.LogInfo("Staging context finished upload");
-
-                    uploadCompletedEvent.Set();
                 });
 
             return true;
@@ -231,10 +235,9 @@ public class D3D12CopyManager : IDisposable
 
         public void WaitIdle()
         {
-            while (Fence.CompletedValue < FenceValue)
-            {
-                Thread.Yield();
-            }
+            _commandQueue.Signal(_fence, _fenceValue);
+            _fence.SetEventOnCompletion(_fenceValue, FenceEvent);
+            FenceEvent.WaitOne();
         }
 
         protected virtual void Dispose(bool disposing)
@@ -243,10 +246,12 @@ public class D3D12CopyManager : IDisposable
             {
                 WaitIdle();
 
+                FenceEvent.Dispose();
+
                 _commandAllocator.Dispose();
                 _commandList.Dispose();
                 UploadBuffer.Dispose();
-                Fence.Dispose();
+                _fence.Dispose();
 
                 _disposed = true;
             }

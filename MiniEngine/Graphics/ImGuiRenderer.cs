@@ -149,7 +149,7 @@ public unsafe class ImGuiRenderer : IDisposable
                 ResourceStates.CopyDest);
         fontTexture.Name = $"{nameof(ImGuiRenderer)} fontTexture";
 
-        _renderer.CopyManager.QueueTexture2DUpload(fontTexture, Format.R8G8B8A8_UNorm, pixels, (uint)width, (uint)height).Wait();
+        _renderer.CopyManager.QueueTexture2DUpload(fontTexture, Format.R8G8B8A8_UNorm, pixels, (uint)width, (uint)height).WaitOne();
 
         ShaderResourceViewDescription srvDesc = new()
         {
