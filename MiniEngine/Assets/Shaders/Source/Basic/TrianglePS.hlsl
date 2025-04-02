@@ -1,10 +1,8 @@
 #include "TriangleCommon.hlsl"
 
-PS_OUTPUT PSMain(PS_INPUT input)
+float4 PSMain(PS_INPUT input) : SV_Target
 {
-    PS_OUTPUT output;
-    
-    output.color = float4(input.color, 1.0);
+    float4 output_color = float4(input.color, 1.0);
 
-    return output;
+    return output_color;
 }

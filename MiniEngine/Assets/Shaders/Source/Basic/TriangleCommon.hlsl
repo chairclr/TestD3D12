@@ -9,8 +9,3 @@ struct PS_INPUT
     float4 pos : SV_POSITION;
     float3 color : COLOR;
 };
-
-struct PS_OUTPUT
-{
-    float4 color : SV_Target;
-};
