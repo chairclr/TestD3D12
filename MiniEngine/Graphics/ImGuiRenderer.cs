@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -29,7 +30,8 @@ public unsafe class ImGuiRenderer : IDisposable
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
 
-    private nint _currentImTextureId = 0;
+    private int _nextViewId = 0;
+    private readonly ConcurrentStack<int> _freedViewIds = [];
 
     private readonly nint _fontTextureId;
     private readonly ID3D12Resource _fontTexture;
@@ -94,9 +96,28 @@ public unsafe class ImGuiRenderer : IDisposable
         SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
         _renderer.Device.CreateSampler(ref samplerDesc, resourceHandle);
         // We need to increment this here since the texture sampler is placed in the same descriptor heap
-        _currentImTextureId++;
+        _nextViewId++;
 
         CreateFontsTexture(out _fontTexture, out _fontTextureId);
+
+        ShaderResourceViewDescription nullSrvDesc = new()
+        {
+            Format = Format.Unknown,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Shader4ComponentMapping = ShaderComponentMapping.Default,
+            Texture2D = new()
+            {
+                MipLevels = 1
+            }
+        };
+
+        // We need to bind a null descriptor to ever slot of the descriptor heap that isn't being used
+        // See https://www.siliceum.com/en/blog/post/d3d12_optimizing_null_descs/
+        // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/descriptors-overview#null-descriptors
+        for (int i = _nextViewId + 1; i < MaxBoundTextureViews + 2; i++)
+        {
+            _renderer.Device.CreateShaderResourceView(null, nullSrvDesc, resourceHandle + (int)(i * _resourceDescriptorSize));
+        }
 
         _renderBuffers = new RenderBuffers[D3D12Renderer.SwapChainBufferCount];
         for (int i = 0; i < D3D12Renderer.SwapChainBufferCount; i++)
@@ -164,12 +185,44 @@ public unsafe class ImGuiRenderer : IDisposable
         io.Fonts.SetTexID(fontTextureId);
     }
 
-    public nint BindTextureView(ID3D12Resource texture, ShaderResourceViewDescription viewDesc)
+    public int BindTextureView(ID3D12Resource texture, ShaderResourceViewDescription viewDesc)
     {
-        nint textureId = _currentImTextureId++;
-        _renderer.Device.CreateShaderResourceView(texture, viewDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(textureId * _resourceDescriptorSize));
+        int viewId;
 
-        return textureId;
+        // If there's been some descriptor slots unbound since, we use those first
+        if (!_freedViewIds.TryPop(out viewId))
+        {
+            viewId = Interlocked.Increment(ref _nextViewId);
+        }
+
+        Log.LogInfo($"viewId: {viewId}");
+
+        _renderer.Device.CreateShaderResourceView(texture, viewDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(viewId * _resourceDescriptorSize));
+
+        return viewId;
+    }
+
+    public void UnbindTextureView(int viewId)
+    {
+        _freedViewIds.Push(viewId);
+
+        Log.LogInfo($"viewId: {viewId}");
+
+        ShaderResourceViewDescription nullSrvDesc = new()
+        {
+            Format = Format.Unknown,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Shader4ComponentMapping = ShaderComponentMapping.Default,
+            Texture2D = new()
+            {
+                MipLevels = 1
+            }
+        };
+
+        // We need to bind a null descriptor to ever slot of the descriptor heap that isn't being used
+        // See https://www.siliceum.com/en/blog/post/d3d12_optimizing_null_descs/
+        // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/descriptors-overview#null-descriptors
+        _renderer.Device.CreateShaderResourceView(null, nullSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(viewId * _resourceDescriptorSize));
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
