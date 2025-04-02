@@ -642,8 +642,7 @@ public unsafe class D3D12Renderer : IDisposable
             _commandList.SetGraphicsRootSignature(_debugRootSignature);
 
             _commandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
-            _commandList.SetGraphicsRootDescriptorTable((uint)_debugRenderViewIndex, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
-
+            _commandList.SetGraphicsRootDescriptorTable(1, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(_debugRenderViewIndex * _debugResourceDescriptorSize));
 
             _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
             _commandList.DrawInstanced(3, 1, 0, 0);
