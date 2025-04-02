@@ -480,6 +480,8 @@ public unsafe class D3D12Renderer : IDisposable
 
             Log.LogInfo($"Disposing {nameof(D3D12Renderer)}");
 
+            _frameFenceEvent.Dispose();
+
             CopyManager.Dispose();
             _imGuiRenderer.Dispose();
 
