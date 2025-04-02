@@ -10,7 +10,7 @@ if (OperatingSystem.IsLinux())
     //
     // SDL_SetHintWithPriority lets us override environment variables
     // https://wiki.libsdl.org/SDL2/SDL_HINT_VIDEODRIVER
-    Log.LogInfo("Hinting SDL_VIDEODRIVER");
+    Log.LogInfo($"Linux detected, hinting {nameof(SDL.SDL3.SDL_HINT_VIDEO_DRIVER)} to x11");
     SDL.SDL3.SDL_SetHintWithPriority(SDL.SDL3.SDL_HINT_VIDEO_DRIVER, "x11", SDL.SDL_HintPriority.SDL_HINT_OVERRIDE);
 }
 
