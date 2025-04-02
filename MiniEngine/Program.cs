@@ -4,7 +4,7 @@ using MiniEngine.Windowing;
 using Vortice.Direct3D;
 using static Vortice.Direct3D12.D3D12;
 
-Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
+Environment.SetEnvironmentVariable("SDL_VIDEO_DRIVER", "x11");
 
 #if false
 Log.LogInfo("Adding FirstChanceException handler");
