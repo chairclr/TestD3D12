@@ -7,106 +7,72 @@ namespace MiniEngine.Platform;
 [SupportedOSPlatform("linux")]
 public class UnixAutoResetEvent : WaitHandle
 {
-    private const int EFD_NONBLOCK = 0x800;
     private const int EFD_CLOEXEC = 0x1;
-    private readonly SafeEventFdHandle _eventFd;
+
+    private readonly int _fd;
 
     [DllImport("libc", SetLastError = true)]
     private static extern int eventfd(uint initval, int flags);
 
     [DllImport("libc", SetLastError = true)]
-    private static extern int write(int fd, ref ulong value, IntPtr size);
+    private static extern int close(int fd);
 
     [DllImport("libc", SetLastError = true)]
-    private static extern int read(int fd, out ulong value, IntPtr size);
+    private static extern int write(int fd, ref ulong value, nint size);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int read(int fd, out ulong value, nint size);
 
     public UnixAutoResetEvent(bool initialState)
     {
-        int fd = eventfd((uint)(initialState ? 1 : 0), EFD_NONBLOCK | EFD_CLOEXEC);
-        if (fd < 0)
+        _fd = eventfd((uint)(initialState ? 1 : 0), EFD_CLOEXEC);
+        if (_fd < 0)
         {
             throw new InvalidOperationException("Failed to create eventfd");
         }
 
-        _eventFd = new SafeEventFdHandle(fd);
-        SafeWaitHandle = new SafeWaitHandle(_eventFd.DangerousGetHandle(), true);
+        SafeWaitHandle = new SafeWaitHandle(_fd, true);
     }
 
     public bool Set()
     {
         ulong value = 1;
-        int result = write(_eventFd.DangerousGetHandle().ToInt32(), ref value, sizeof(ulong));
+        int result = write(_fd, ref value, sizeof(ulong));
         return result >= 0;
     }
 
     public override bool WaitOne(int millisecondsTimeout, bool exitContext)
     {
-        int result;
-        DateTime startTime = DateTime.UtcNow;
-
-        // Do while loop here because chatgpt said so
-        // it kinda makes sense though so I'll leave it
-        do
-        {
-            if (_eventFd.IsClosed || _eventFd.IsInvalid)
-            {
-                return false;
-            }
-
-            result = read(_eventFd.DangerousGetHandle().ToInt32(), out ulong _, sizeof(ulong));
-            if (result >= 0)
-            {
-                return true;
-            }
-
-            int err = Marshal.GetLastPInvokeError();
-            if (err != 11 /*EAGAIN*/ && err != 4 /*EINTR*/)
-            {
-                throw new InvalidOperationException("Failed to read eventfd");
-            }
-
-            if (millisecondsTimeout >= 0 && (DateTime.UtcNow - startTime).TotalMilliseconds >= millisecondsTimeout)
-            {
-                return false;
-            }
-
-            Thread.Sleep(1);
-        } while (true);
+        // NOT IMPLEMENTED
+        throw new NotImplementedException();
     }
 
     public override bool WaitOne(int millisecondsTimeout)
     {
-        return WaitOne(millisecondsTimeout, false);
+        // NOT IMPLEMENTED
+        throw new NotImplementedException();
     }
 
     public override bool WaitOne()
     {
-        return WaitOne(-1, false);
+        int err;
+        while (read(_fd, out ulong _, sizeof(ulong)) < 0)
+        {
+            err = Marshal.GetLastPInvokeError();
+
+            if (err != 11 /*EAGAIN*/ && err != 4 /*EINTR*/)
+            {
+                throw new InvalidOperationException("Failed to read eventfd");
+            }
+        }
+
+        return true;
     }
 
     protected override void Dispose(bool explicitDisposing)
     {
-        if (!_eventFd.IsInvalid)
-        {
-            _eventFd.Dispose();
-        }
+        close(_fd);
 
-        base.Dispose(explicitDisposing);
-    }
-}
-
-public class SafeEventFdHandle : SafeHandleZeroOrMinusOneIsInvalid
-{
-    [DllImport("libc", SetLastError = true)]
-    private static extern int close(int fd);
-
-    public SafeEventFdHandle(int fd) : base(true)
-    {
-        SetHandle(fd);
-    }
-
-    protected override bool ReleaseHandle()
-    {
-        return close(handle.ToInt32()) == 0;
+        // NOTE: Do not call base.Dispose, as it attempts to dispose of the fd in an imporper internal way
     }
 }
