@@ -2,6 +2,7 @@ bin/
 obj/
 .vs/
 .vscode/
+.idea/
 *_dxgi.log
 .netcoredbg_hist
 vkd3d-proton.cache
