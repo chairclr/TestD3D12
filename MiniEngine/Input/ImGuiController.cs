@@ -15,10 +15,11 @@ internal class ImGuiController
         _imGuiContext = imGuiContext;
     }
 
-    public void NewFrame()
+    public void NewFrame(float deltaTime)
     {
         ImGuiIOPtr io = ImGui.GetIO();
         io.DisplaySize = _window.Size;
+        io.DeltaTime = deltaTime;
 
         ImGui.SetCurrentContext(_imGuiContext);
         ImGui.NewFrame();

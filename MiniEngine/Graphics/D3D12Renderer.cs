@@ -64,6 +64,7 @@ public unsafe class D3D12Renderer : IDisposable
 
 
     private Camera _mainCamera;
+    private Vector3 _mainCameraEulerRotation = Vector3.Zero;
 
     private bool _disposed;
 
@@ -192,7 +193,7 @@ public unsafe class D3D12Renderer : IDisposable
         _commandList.Close();
 
         uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
-        uint vertexBufferSize = 3 * vertexBufferStride;
+        uint vertexBufferSize = 36 * vertexBufferStride;
 
         _vertexBuffer = Device.CreateCommittedResource(
             HeapType.Upload,
@@ -201,10 +202,55 @@ public unsafe class D3D12Renderer : IDisposable
 
         ReadOnlySpan<TriangleVertex> triangleVertices =
         [
-            new TriangleVertex(new Vector3(100 + Window.Size.X / 4f, 100 + Window.Size.Y / 4f + Window.Size.Y / 4f, 0.0f), new Vector3(1.0f, 0.0f, 0.0f)),
-            new TriangleVertex(new Vector3(100 + Window.Size.X / 4f + Window.Size.X / 4f, 100 + Window.Size.Y / 4f + Window.Size.Y / -4f, 0.0f), new Vector3(0.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(100 + Window.Size.X / 4f + Window.Size.X / -4f, 100 + Window.Size.Y / 4f + Window.Size.Y / -4f, 0.0f), new Vector3(0.0f, 0.0f, 1.0f))
+            // Front face
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
+
+            // Back face
+            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(1.0f, 1.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(1.0f, 1.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
+
+            // Left face
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
+
+            // Right face
+            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.5f, 0.0f)),
+
+            // Top face
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.5f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
+            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
+
+            // Bottom face
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f))
         ];
+
 
         _vertexBuffer.SetData(triangleVertices);
         // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
@@ -237,10 +283,6 @@ public unsafe class D3D12Renderer : IDisposable
 
             deltaTimeWatch.Restart();
 
-            ImGuiIOPtr io = ImGui.GetIO();
-
-            io.DeltaTime = deltaTime;
-
             unsafe
             {
                 while (SDL3.SDL_PollEvent(&@event))
@@ -267,16 +309,11 @@ public unsafe class D3D12Renderer : IDisposable
                 }
             }
 
-            _imGuiController.NewFrame();
-
-            if (ImGui.Begin("Test Window"))
-            {
-                ImGui.Text($"FPS {io.Framerate}");
-                ImGui.Image(0, new Vector2(512, 128));
-            }
-            ImGui.End();
-
+            _imGuiController.NewFrame(deltaTime);
+            DrawImGui();
             _imGuiController.EndFrame();
+
+            Update(deltaTime);
 
             DrawFrame();
         }
@@ -377,6 +414,8 @@ public unsafe class D3D12Renderer : IDisposable
         CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
 
         _frameIndex = SwapChain.CurrentBackBufferIndex;
+
+        _mainCamera.SetProjection(90f, Window.AspectRatio, 0.1f, 1000.0f);
     }
 
     // Waits until the gpu is idle
@@ -390,13 +429,66 @@ public unsafe class D3D12Renderer : IDisposable
         _fenceValues[_frameIndex]++;
     }
 
+    private void Update(float deltaTime)
+    {
+        ImGuiIOPtr io = ImGui.GetIO();
+
+        if (!io.WantCaptureKeyboard && !io.WantCaptureMouse)
+        {
+            if (io.MouseDown[0])
+            {
+                _mainCameraEulerRotation.X += -io.MouseDelta.X * (1f / 360f);
+                _mainCameraEulerRotation.Y += io.MouseDelta.Y * (1f / 360f);
+
+                _mainCamera.Rotation = Quaternion.CreateFromYawPitchRoll(_mainCameraEulerRotation.X, _mainCameraEulerRotation.Y, _mainCameraEulerRotation.Z);
+            }
+
+            float s = 10f * deltaTime;
+            if (ImGui.IsKeyDown(ImGuiKey.W))
+            {
+                _mainCamera.Position += _mainCamera.Forward * s;
+            }
+            if (ImGui.IsKeyDown(ImGuiKey.S))
+            {
+                _mainCamera.Position += _mainCamera.Backward * s;
+            }
+
+            if (ImGui.IsKeyDown(ImGuiKey.A))
+            {
+                _mainCamera.Position += _mainCamera.Right * s;
+            }
+            if (ImGui.IsKeyDown(ImGuiKey.D))
+            {
+                _mainCamera.Position += _mainCamera.Left * s;
+            }
+
+            if (ImGui.IsKeyDown(ImGuiKey.Q))
+            {
+                _mainCamera.Position += Vector3.UnitY * s;
+            }
+            if (ImGui.IsKeyDown(ImGuiKey.E))
+            {
+                _mainCamera.Position += -Vector3.UnitY * s;
+            }
+        }
+    }
+
+    private void DrawImGui()
+    {
+        if (ImGui.Begin("Test window"))
+        {
+            ImGui.Text("Test text");
+        }
+        ImGui.End();
+    }
+
     private void DrawFrame()
     {
         // Create the projection matrix and then copy it to the mapped part of memory for the current frameIndex
         // as mentioned before, every frame that can be in flight gets its own constant buffer
         //
         // This could maybe be simplified so that there's only one constant buffer, but idk; the directx samples do it like this
-        Constants constants = new(Matrix4x4.Identity, Matrix4x4.CreateOrthographicOffCenter(0f, Window.Size.X, Window.Size.Y, 0.0f, -1.0f, 1.0f));
+        Constants constants = new(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix);
         void* dest = _constantsMemory + (Unsafe.SizeOf<Constants>() * _frameIndex);
         Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
 
@@ -428,7 +520,7 @@ public unsafe class D3D12Renderer : IDisposable
 
         _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         _commandList.IASetVertexBuffers(0, _vertexBufferView);
-        _commandList.DrawInstanced(3, 1, 0, 0);
+        _commandList.DrawInstanced(36, 1, 0, 0);
 
         ImGui.Render();
 
@@ -535,5 +627,5 @@ public unsafe class D3D12Renderer : IDisposable
     record struct TriangleVertex(Vector3 position, Vector3 color);
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct Constants(Matrix4x4 ViewMatrix, Matrix4x4 ProjectionMatrix);
+    private record struct Constants(Matrix4x4 ViewProjectionMatrix);
 }
