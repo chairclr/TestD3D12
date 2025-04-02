@@ -12,7 +12,18 @@ public unsafe class BaseWindow : IDisposable
 
     internal SDL_Window* SDLWindowHandle { get; }
 
-    public nint WindowHandle => (nint)SDLWindowHandle;
+    public nint WindowHandle
+    {
+        get
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return (nint)SDLWindowHandle;
+            }
+
+            return SDL_GetPointerProperty(SDL_GetWindowProperties(SDLWindowHandle), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nint.Zero);
+        }
+    }
 
     public Vector2 Position
     {
