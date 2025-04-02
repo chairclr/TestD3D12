@@ -14,6 +14,8 @@ namespace MiniEngine.Graphics;
 
 public unsafe class ImGuiRenderer : IDisposable
 {
+    private const int MaxBoundTextureViews = 126;
+
     private readonly D3D12Renderer _renderer;
 
     private readonly ID3D12RootSignature _rootSignature;
@@ -28,7 +30,6 @@ public unsafe class ImGuiRenderer : IDisposable
     private byte* _constantsMemory = null;
 
     private nint _currentImTextureId = 0;
-    private readonly Dictionary<nint, uint> _imTextureMap = [];
 
     private readonly nint _fontTextureId;
     private readonly ID3D12Resource _fontTexture;
@@ -46,7 +47,7 @@ public unsafe class ImGuiRenderer : IDisposable
             | RootSignatureFlags.DenyAmplificationShaderRootAccess
             | RootSignatureFlags.DenyMeshShaderRootAccess;
 
-        RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0));
+        RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, MaxBoundTextureViews, 0, 0, 0));
 
         RootSignatureDescription1 rootSignatureDesc = new()
         {
@@ -71,7 +72,8 @@ public unsafe class ImGuiRenderer : IDisposable
         // 2. Texture sampler (LinearWrap)
         //
         // The vertex shader has a constant buffer, but we don't need to make a descriptor heap entry for it
-        _resourceDescriptorHeap = _renderer.Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 2, DescriptorHeapFlags.ShaderVisible));
+        // We allocate +2 here for user textures
+        _resourceDescriptorHeap = _renderer.Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, MaxBoundTextureViews + 2, DescriptorHeapFlags.ShaderVisible));
         _resourceDescriptorSize = _renderer.Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
         // We actually have a separate cbuffer for each swapchain buffer
@@ -89,13 +91,12 @@ public unsafe class ImGuiRenderer : IDisposable
         }
 
         CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
-
-        CreateFontsTexture(resourceHandle, out _fontTexture, out _fontTextureId);
-        resourceHandle += (int)_resourceDescriptorSize;
-
         SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
         _renderer.Device.CreateSampler(ref samplerDesc, resourceHandle);
-        resourceHandle += (int)_resourceDescriptorSize;
+        // We need to increment this here since the texture sampler is placed in the same descriptor heap
+        _currentImTextureId++;
+
+        CreateFontsTexture(out _fontTexture, out _fontTextureId);
 
         _renderBuffers = new RenderBuffers[D3D12Renderer.SwapChainBufferCount];
         for (int i = 0; i < D3D12Renderer.SwapChainBufferCount; i++)
@@ -133,7 +134,7 @@ public unsafe class ImGuiRenderer : IDisposable
         _pipelineState = _renderer.Device.CreateGraphicsPipelineState(psoDesc);
     }
 
-    private void CreateFontsTexture(CpuDescriptorHandle resourceHandle, out ID3D12Resource fontTexture, out nint fontTextureId)
+    private void CreateFontsTexture(out ID3D12Resource fontTexture, out nint fontTextureId)
     {
         ImGuiIOPtr io = ImGui.GetIO();
         io.Fonts.GetTexDataAsRGBA32(out byte* pixels, out int width, out int height);
@@ -159,12 +160,16 @@ public unsafe class ImGuiRenderer : IDisposable
             Shader4ComponentMapping = ShaderComponentMapping.Default,
         };
 
-        _renderer.Device.CreateShaderResourceView(fontTexture, srvDesc, resourceHandle);
-
-        // TODO: Maybe dynamically allocate from the descriptor heap?
-        fontTextureId = _currentImTextureId++;
-        _imTextureMap.Add(fontTextureId, 1);
+        fontTextureId = BindTextureView(fontTexture, srvDesc);
         io.Fonts.SetTexID(fontTextureId);
+    }
+
+    public nint BindTextureView(ID3D12Resource texture, ShaderResourceViewDescription viewDesc)
+    {
+        nint textureId = _currentImTextureId++;
+        _renderer.Device.CreateShaderResourceView(texture, viewDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(textureId * _resourceDescriptorSize));
+
+        return textureId;
     }
 
     public void PopulateCommandList(ID3D12GraphicsCommandList4 commandList, uint frameIndex, ImDrawDataPtr data)
@@ -229,7 +234,10 @@ public unsafe class ImGuiRenderer : IDisposable
                     // Optimization to only set the descriptor table index when the texture id changes
                     if (cmd.TextureId != lastTextureId)
                     {
-                        commandList.SetGraphicsRootDescriptorTable(_imTextureMap[cmd.TextureId], _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
+                        GpuDescriptorHandle textureHandle = _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(cmd.TextureId * _resourceDescriptorSize);
+
+                        // 1 because the constant buffer view descriptor comes first
+                        commandList.SetGraphicsRootDescriptorTable(1, textureHandle);
                         lastTextureId = cmd.TextureId;
                     }
 
