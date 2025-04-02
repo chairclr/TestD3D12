@@ -1,4 +1,3 @@
-using SharpGen.Runtime;
 using Vortice.Direct3D12;
 
 namespace MiniEngine.Graphics;
@@ -12,7 +11,7 @@ public static class DescriptorHeapHelper
     {
         CpuDescriptorHandle result;
 
-        if (PlatformDetection.IsItaniumSystemV)
+        if (OperatingSystem.IsLinux())
         {
             // Fixed behavior of normal Vortice ID3D12DescriptorHeap::GetCPUDescriptorHandleForHeapStart
             unsafe
@@ -29,7 +28,7 @@ public static class DescriptorHeapHelper
     {
         GpuDescriptorHandle result;
 
-        if (PlatformDetection.IsItaniumSystemV)
+        if (OperatingSystem.IsLinux())
         {
             // Fixed behavior of normal Vortice ID3D12DescriptorHeap::GetGPUDescriptorHandleForHeapStart
             unsafe

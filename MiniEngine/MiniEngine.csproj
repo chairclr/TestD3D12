@@ -67,6 +67,7 @@
       <Using Namespace="System.Runtime.InteropServices" />
       <Code Type="Fragment" Language="cs">
         <![CDATA[
+          // Cannot call the better OperatingSystem.IsWhatever functions here
           bool windows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
           bool linux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
           if ((!windows && !linux) || !Environment.Is64BitOperatingSystem)
