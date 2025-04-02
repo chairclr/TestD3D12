@@ -39,6 +39,9 @@
 
     <ShaderFiles Include="ImGui/ImGuiVS" ShaderProfile="vs_6_0" ShaderEntryPoint="VSMain" />
     <ShaderFiles Include="ImGui/ImGuiPS" ShaderProfile="ps_6_0" ShaderEntryPoint="PSMain" />
+
+    <ShaderFiles Include="Debug/FullscreenVS" ShaderProfile="vs_6_0" ShaderEntryPoint="VSMain" />
+    <ShaderFiles Include="Debug/FullscreenDepthPS" ShaderProfile="ps_6_0" ShaderEntryPoint="PSMain" />
   </ItemGroup>
 
   <Target Name="CompileShaders" BeforeTargets="BeforeBuild">

@@ -46,6 +46,15 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12RootSignature _rootSignature;
     private readonly ID3D12PipelineState _pipelineState;
 
+
+    // Debug exclusive stuff
+    private readonly ID3D12RootSignature _debugRootSignature;
+    private readonly ID3D12DescriptorHeap _debugResourceDescriptorHeap;
+    private readonly uint _debugResourceDescriptorSize;
+
+    private readonly ID3D12PipelineState _depthDebugPipelineState;
+
+
     private readonly ID3D12GraphicsCommandList4 _commandList;
 
     private readonly ID3D12Resource _vertexBuffer;
@@ -110,6 +119,56 @@ public unsafe class D3D12Renderer : IDisposable
 
         CopyManager = new(Device, GraphicsQueue);
 
+        RootSignatureFlags rootSignatureFlags = RootSignatureFlags.AllowInputAssemblerInputLayout
+            | RootSignatureFlags.DenyHullShaderRootAccess
+            | RootSignatureFlags.DenyDomainShaderRootAccess
+            | RootSignatureFlags.DenyGeometryShaderRootAccess
+            | RootSignatureFlags.DenyAmplificationShaderRootAccess
+            | RootSignatureFlags.DenyMeshShaderRootAccess;
+
+        // Debug pipeline renders a fullscreen triangle and samples from a single SRV onto the screen
+        RootDescriptorTable1 debugSrvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 1));
+        RootSignatureDescription1 debugRootSignatureDesc = new()
+        {
+            Flags = rootSignatureFlags,
+            Parameters =
+            [
+                new(debugSrvTable, ShaderVisibility.Pixel)
+            ],
+            StaticSamplers =
+            [
+                new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
+            ],
+        };
+        _debugRootSignature = Device.CreateRootSignature(debugRootSignatureDesc);
+        _debugResourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 16, DescriptorHeapFlags.ShaderVisible));
+        _debugResourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+
+        // The debug sampler is the first thing in the descriptor heap
+        // Everything else is srvs to textures to view stuff, which is also indexed by _debugRenderViewIndex
+        SamplerDescription debugSamplerDesc = SamplerDescription.LinearClamp;
+        Device.CreateSampler(ref debugSamplerDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
+
+        ReadOnlyMemory<byte> debugVS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenVS");
+        ReadOnlyMemory<byte> depthDebugPS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenDepthPS");
+
+        GraphicsPipelineStateDescription depthDebugPsoDesc = new()
+        {
+            RootSignature = _debugRootSignature,
+            VertexShader = debugVS,
+            PixelShader = depthDebugPS,
+            SampleMask = uint.MaxValue,
+            PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
+            RasterizerState = RasterizerDescription.CullNone,
+            BlendState = BlendDescription.Opaque,
+            DepthStencilState = DepthStencilDescription.None,
+            RenderTargetFormats = [Format.R8G8B8A8_UNorm],
+            SampleDescription = SampleDescription.Default
+        };
+
+        _depthDebugPipelineState = Device.CreateGraphicsPipelineState(depthDebugPsoDesc);
+        Log.LogInfo("Created debug resources");
+
         CreateSwapChain(out SwapChain, out _frameIndex);
 
         _rtvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.RenderTargetView, SwapChainBufferCount));
@@ -126,12 +185,6 @@ public unsafe class D3D12Renderer : IDisposable
             _commandAllocators[i] = Device.CreateCommandAllocator(CommandListType.Direct);
         }
 
-        RootSignatureFlags rootSignatureFlags = RootSignatureFlags.AllowInputAssemblerInputLayout
-            | RootSignatureFlags.DenyHullShaderRootAccess
-            | RootSignatureFlags.DenyDomainShaderRootAccess
-            | RootSignatureFlags.DenyGeometryShaderRootAccess
-            | RootSignatureFlags.DenyAmplificationShaderRootAccess
-            | RootSignatureFlags.DenyMeshShaderRootAccess;
         RootSignatureDescription1 rootSignatureDesc = new()
         {
             Flags = rootSignatureFlags,
@@ -377,6 +430,23 @@ public unsafe class D3D12Renderer : IDisposable
         };
 
         Device.CreateDepthStencilView(depthStencilTexture, viewDesc, _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
+
+
+        // SRV for the depth view debug shader
+        ShaderResourceViewDescription debugSrvDesc = new()
+        {
+            Format = depthStencilFormat,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            Shader4ComponentMapping = ShaderComponentMapping.Default,
+        };
+
+        // + size * 1 because 1 is the index of the depth view, see the debug view header in imgui
+        Device.CreateShaderResourceView(depthStencilTexture, debugSrvDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(_debugResourceDescriptorSize * 1));
     }
 
     private void CreateFrameResources(out ID3D12Resource[] renderTargets)
@@ -434,6 +504,8 @@ public unsafe class D3D12Renderer : IDisposable
     {
         ImGuiIOPtr io = ImGui.GetIO();
 
+        // Basic FPS camera movement/rotation
+        // Click and drag to rotate, WASD/QE for directional/verticle movement
         if (!io.WantCaptureKeyboard && !io.WantCaptureMouse)
         {
             if (io.MouseDown[0])
@@ -476,11 +548,17 @@ public unsafe class D3D12Renderer : IDisposable
         }
     }
 
+    private int _debugRenderViewIndex = 0;
+
     private void DrawImGui()
     {
-        if (ImGui.Begin("Test window"))
+        if (ImGui.Begin("Debug Window"))
         {
-            ImGui.Text("Test text");
+            if (ImGui.CollapsingHeader("Debug Views"))
+            {
+                string[] debugViewNames = ["None", "Depth Buffer"];
+                ImGui.Combo("Texture Debug View", ref _debugRenderViewIndex, debugViewNames, debugViewNames.Length);
+            }
         }
         ImGui.End();
     }
@@ -498,32 +576,55 @@ public unsafe class D3D12Renderer : IDisposable
         _commandAllocators[_frameIndex].Reset();
         _commandList.Reset(_commandAllocators[_frameIndex], _pipelineState);
 
-        // Set necessary state.
-        _commandList.SetGraphicsRootSignature(_rootSignature);
-
         // Indicate that the back buffer will be used as a render target.
         _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.Present, ResourceStates.RenderTarget);
 
         CpuDescriptorHandle rtvDescriptor = new(_rtvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1(), (int)_frameIndex, _rtvDescriptorSize);
         CpuDescriptorHandle dsvDescriptor = _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
-        Color4 clearColor = Colors.CornflowerBlue;
-
-        _commandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
-        _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
-        _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
-
+        _commandList.SetGraphicsRootSignature(_rootSignature);
         _commandList.SetMarker("Triangle Frame");
+        {
+            // Set necessary state.
+            Color4 clearColor = Colors.CornflowerBlue;
 
-        // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
-        _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+            _commandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
+            _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
+            _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
-        _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
-        _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-        _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-        _commandList.IASetVertexBuffers(0, _vertexBufferView);
-        _commandList.DrawInstanced(36, 1, 0, 0);
+            // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
+            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+
+            _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
+            _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
+
+            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _commandList.IASetVertexBuffers(0, _vertexBufferView);
+            _commandList.DrawInstanced(36, 1, 0, 0);
+        }
+
+        if (_debugRenderViewIndex > 0)
+        {
+            switch (_debugRenderViewIndex)
+            {
+                case 1:
+                    _commandList.SetPipelineState(_depthDebugPipelineState);
+                    break;
+                default:
+                    throw new InvalidOperationException($"No pipeline state for debug render view index {_debugRenderViewIndex}");
+            }
+
+            _commandList.SetGraphicsRootSignature(_debugRootSignature);
+
+            _commandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
+            _commandList.SetGraphicsRootDescriptorTable((uint)_debugRenderViewIndex, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
+
+            _commandList.OMSetRenderTargets(rtvDescriptor, null);
+
+            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _commandList.DrawInstanced(3, 1, 0, 0);
+        }
 
         ImGui.Render();
 
@@ -579,6 +680,10 @@ public unsafe class D3D12Renderer : IDisposable
 
             CopyManager.Dispose();
             _imGuiRenderer.Dispose();
+
+            _depthDebugPipelineState.Dispose();
+            _debugRootSignature.Dispose();
+            _debugResourceDescriptorHeap.Dispose();
 
             _constantBuffer.Dispose();
             _vertexBuffer.Dispose();
