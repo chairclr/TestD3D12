@@ -125,11 +125,7 @@ public unsafe class ImGuiRenderer : IDisposable
             RasterizerState = RasterizerDescription.CullNone,
             BlendState = BlendDescription.NonPremultiplied,
             // Disable depth and stencil
-            DepthStencilState = DepthStencilDescription.Default with
-            {
-                DepthEnable = false,
-                StencilEnable = false
-            },
+            DepthStencilState = DepthStencilDescription.None,
             RenderTargetFormats = [Format.R8G8B8A8_UNorm],
             SampleDescription = SampleDescription.Default,
         };
