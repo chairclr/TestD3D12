@@ -554,6 +554,7 @@ public unsafe class D3D12Renderer : IDisposable
     {
         if (ImGui.Begin("Debug Window"))
         {
+            ImGui.Text($"FPS: {ImGui.GetIO().Framerate}");
             if (ImGui.CollapsingHeader("Debug Views"))
             {
                 string[] debugViewNames = ["None", "Depth Buffer"];
@@ -606,6 +607,10 @@ public unsafe class D3D12Renderer : IDisposable
 
         if (_debugRenderViewIndex > 0)
         {
+            _commandList.OMSetRenderTargets(rtvDescriptor, null);
+
+            _commandList.SetMarker("Debug");
+
             switch (_debugRenderViewIndex)
             {
                 case 1:
@@ -620,7 +625,6 @@ public unsafe class D3D12Renderer : IDisposable
             _commandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
             _commandList.SetGraphicsRootDescriptorTable((uint)_debugRenderViewIndex, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
 
-            _commandList.OMSetRenderTargets(rtvDescriptor, null);
 
             _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
             _commandList.DrawInstanced(3, 1, 0, 0);
