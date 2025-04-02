@@ -14,14 +14,15 @@ if (OperatingSystem.IsLinux())
     SDL.SDL3.SDL_SetHintWithPriority(SDL.SDL3.SDL_HINT_VIDEO_DRIVER, "x11", SDL.SDL_HintPriority.SDL_HINT_OVERRIDE);
 }
 
-#if false
-Log.LogInfo("Adding FirstChanceException handler");
-AppDomain.CurrentDomain.FirstChanceException += static (sender, e) =>
+if (Environment.GetEnvironmentVariable("MINIENGINE_FCE") == "1")
 {
-    Log.LogWarn($"[FirstChanceException]: {e.Exception}");
-    Log.LogInfo($"SDL_GetError: {SDL.SDL3.SDL_GetError()}");
-};
-#endif
+    Log.LogInfo("Adding FirstChanceException handler");
+    AppDomain.CurrentDomain.FirstChanceException += static (sender, e) =>
+    {
+        Log.LogWarn($"[FirstChanceException]: {e.Exception}");
+        Log.LogInfo($"SDL_GetError: {SDL.SDL3.SDL_GetError()}");
+    };
+}
 
 Log.LogInfo("Checking for D3D12 FeatureLevel 12_0");
 if (!IsSupported(FeatureLevel.Level_12_0))
