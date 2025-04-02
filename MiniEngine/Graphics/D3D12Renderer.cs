@@ -64,7 +64,8 @@ public unsafe class D3D12Renderer : IDisposable
 
 
     private Camera _mainCamera;
-    private Vector3 _mainCameraEulerRotation = Vector3.Zero;
+    private Vector3 _firstPersonCameraRotation = Vector3.Zero;
+    private Vector3 _firstPersonCameraPosition = Vector3.Zero;
 
     private bool _disposed;
 
@@ -437,39 +438,41 @@ public unsafe class D3D12Renderer : IDisposable
         {
             if (io.MouseDown[0])
             {
-                _mainCameraEulerRotation.X += -io.MouseDelta.X * (1f / 360f);
-                _mainCameraEulerRotation.Y += io.MouseDelta.Y * (1f / 360f);
+                _firstPersonCameraRotation.X += -io.MouseDelta.X * (1f / 360f);
+                _firstPersonCameraRotation.Y += io.MouseDelta.Y * (1f / 360f);
 
-                _mainCamera.Rotation = Quaternion.CreateFromYawPitchRoll(_mainCameraEulerRotation.X, _mainCameraEulerRotation.Y, _mainCameraEulerRotation.Z);
+                _mainCamera.Rotation = Quaternion.CreateFromYawPitchRoll(_firstPersonCameraRotation.X, _firstPersonCameraRotation.Y, _firstPersonCameraRotation.Z);
             }
 
             float s = 10f * deltaTime;
             if (ImGui.IsKeyDown(ImGuiKey.W))
             {
-                _mainCamera.Position += _mainCamera.Forward * s;
+                _firstPersonCameraPosition += _mainCamera.Forward * s;
             }
             if (ImGui.IsKeyDown(ImGuiKey.S))
             {
-                _mainCamera.Position += _mainCamera.Backward * s;
+                _firstPersonCameraPosition += _mainCamera.Backward * s;
             }
 
             if (ImGui.IsKeyDown(ImGuiKey.A))
             {
-                _mainCamera.Position += _mainCamera.Right * s;
+                _firstPersonCameraPosition += _mainCamera.Right * s;
             }
             if (ImGui.IsKeyDown(ImGuiKey.D))
             {
-                _mainCamera.Position += _mainCamera.Left * s;
+                _firstPersonCameraPosition += _mainCamera.Left * s;
             }
 
             if (ImGui.IsKeyDown(ImGuiKey.Q))
             {
-                _mainCamera.Position += Vector3.UnitY * s;
+                _firstPersonCameraPosition += Vector3.UnitY * s;
             }
             if (ImGui.IsKeyDown(ImGuiKey.E))
             {
-                _mainCamera.Position += -Vector3.UnitY * s;
+                _firstPersonCameraPosition += -Vector3.UnitY * s;
             }
+
+            _mainCamera.Position = _firstPersonCameraPosition;
         }
     }
 
