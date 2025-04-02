@@ -1,7 +1,9 @@
-#include "Common.hlsl"
+#include "TriangleCommon.hlsl"
 
 cbuffer constants : register(b0)
 {
+    // Basically unused 
+    column_major float4x4 ViewMatrix; 
     column_major float4x4 ProjectionMatrix; 
 };
 

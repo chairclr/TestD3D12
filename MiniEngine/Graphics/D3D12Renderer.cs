@@ -62,6 +62,9 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
     private uint _frameIndex;
 
+
+    private Camera _mainCamera;
+
     private bool _disposed;
 
     public D3D12Renderer(BaseWindow window)
@@ -141,6 +144,8 @@ public unsafe class D3D12Renderer : IDisposable
         };
 
         _rootSignature = Device.CreateRootSignature(rootSignatureDesc);
+
+        _mainCamera = new Camera(90.0f, Window.AspectRatio, 0.01f, 1000.0f);
 
         // We actually have a separate cbuffer for each swapchain buffer
         // Later we update only the cbuffer for the current frameIndex
@@ -391,13 +396,12 @@ public unsafe class D3D12Renderer : IDisposable
         // as mentioned before, every frame that can be in flight gets its own constant buffer
         //
         // This could maybe be simplified so that there's only one constant buffer, but idk; the directx samples do it like this
-        Constants constants = new(Matrix4x4.CreateOrthographicOffCenter(0f, Window.Size.X, Window.Size.Y, 0.0f, -1.0f, 1.0f));
+        Constants constants = new(Matrix4x4.Identity, Matrix4x4.CreateOrthographicOffCenter(0f, Window.Size.X, Window.Size.Y, 0.0f, -1.0f, 1.0f));
         void* dest = _constantsMemory + (Unsafe.SizeOf<Constants>() * _frameIndex);
         Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
 
         _commandAllocators[_frameIndex].Reset();
         _commandList.Reset(_commandAllocators[_frameIndex], _pipelineState);
-        _commandList.BeginEvent("Frame");
 
         // Set necessary state.
         _commandList.SetGraphicsRootSignature(_rootSignature);
@@ -414,6 +418,8 @@ public unsafe class D3D12Renderer : IDisposable
         _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
         _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
+        _commandList.SetMarker("Triangle Frame");
+
         // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
         _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
 
@@ -424,17 +430,11 @@ public unsafe class D3D12Renderer : IDisposable
         _commandList.IASetVertexBuffers(0, _vertexBufferView);
         _commandList.DrawInstanced(3, 1, 0, 0);
 
-
-        // Indicate that the back buffer will now be used to present.
-        //_commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
-        _commandList.EndEvent();
-
         ImGui.Render();
 
-        _commandList.BeginEvent("ImGui");
         _commandList.OMSetRenderTargets(rtvDescriptor, null);
+        _commandList.SetMarker("ImGui");
         _imGuiRenderer.PopulateCommandList(_commandList, _frameIndex, ImGui.GetDrawData());
-        _commandList.EndEvent();
 
         // Indicate that the back buffer will be used to present
         _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
@@ -535,5 +535,5 @@ public unsafe class D3D12Renderer : IDisposable
     record struct TriangleVertex(Vector3 position, Vector3 color);
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct Constants(Matrix4x4 ProjectionMatrix);
+    private record struct Constants(Matrix4x4 ViewMatrix, Matrix4x4 ProjectionMatrix);
 }

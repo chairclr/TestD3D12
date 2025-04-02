@@ -1,4 +1,4 @@
-#include "Common.hlsl"
+#include "TriangleCommon.hlsl"
 
 PS_OUTPUT PSMain(PS_INPUT input)
 {
