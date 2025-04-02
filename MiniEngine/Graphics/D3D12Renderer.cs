@@ -206,7 +206,7 @@ public unsafe class D3D12Renderer : IDisposable
 
         _rootSignature = Device.CreateRootSignature(rootSignatureDesc);
 
-        _mainCamera = new Camera(90.0f, Window.AspectRatio, 0.01f, 1000.0f);
+        _mainCamera = new Camera(90.0f, Window.AspectRatio, 0.05f, 1000.0f);
 
         // We actually have a separate cbuffer for each swapchain buffer
         // Later we update only the cbuffer for the current frameIndex
@@ -497,7 +497,7 @@ public unsafe class D3D12Renderer : IDisposable
 
         _frameIndex = SwapChain.CurrentBackBufferIndex;
 
-        _mainCamera.SetProjection(90f, Window.AspectRatio, 0.1f, 1000.0f);
+        _mainCamera.SetProjection(90f, Window.AspectRatio, 0.05f, 1000.0f);
     }
 
     // Waits until the gpu is idle
