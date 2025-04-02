@@ -6,7 +6,12 @@ using static Vortice.Direct3D12.D3D12;
 
 if (OperatingSystem.IsLinux())
 {
-    Environment.SetEnvironmentVariable("SDL_VIDEO_DRIVER", "x11");
+    // Custom vkd3d is only compiled to support x11, so we must hint to SDL that we need the x11 video driver
+    //
+    // SDL_SetHintWithPriority lets us override environment variables
+    // https://wiki.libsdl.org/SDL2/SDL_HINT_VIDEODRIVER
+    Log.LogInfo("Hinting SDL_VIDEODRIVER");
+    SDL.SDL3.SDL_SetHintWithPriority(SDL.SDL3.SDL_HINT_VIDEO_DRIVER, "x11", SDL.SDL_HintPriority.SDL_HINT_OVERRIDE);
 }
 
 #if false
