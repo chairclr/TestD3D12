@@ -169,6 +169,12 @@ public unsafe class D3D12Renderer : IDisposable
         _depthDebugPipelineState = Device.CreateGraphicsPipelineState(depthDebugPsoDesc);
         Log.LogInfo("Created debug resources");
 
+        nint imGuiContext = ImGui.CreateContext();
+        ImGui.SetCurrentContext(imGuiContext);
+        _imGuiRenderer = new ImGuiRenderer(this);
+        _imGuiController = new ImGuiController(Window, imGuiContext);
+        Log.LogInfo("Created ImGui resources");
+
         CreateSwapChain(out SwapChain, out _frameIndex);
 
         _rtvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.RenderTargetView, SwapChainBufferCount));
@@ -315,11 +321,6 @@ public unsafe class D3D12Renderer : IDisposable
 
         _frameFenceEvent = PlatformHelper.CreateAutoResetEvent(false);
 
-        nint imGuiContext = ImGui.CreateContext();
-        ImGui.SetCurrentContext(imGuiContext);
-        _imGuiRenderer = new ImGuiRenderer(this);
-        _imGuiController = new ImGuiController(Window, imGuiContext);
-
         Stopwatch deltaTimeWatch = new();
 
         bool exit = false;
@@ -400,6 +401,8 @@ public unsafe class D3D12Renderer : IDisposable
         backbufferIndex = swapChain3.CurrentBackBufferIndex;
     }
 
+    private int _depthDebugImGuiViewId;
+
     private void CreateDepthStencil(out ID3D12Resource depthStencilTexture, out Format depthStencilFormat)
     {
         depthStencilFormat = PreferredDepthStencilFormat;
@@ -447,6 +450,7 @@ public unsafe class D3D12Renderer : IDisposable
 
         // + size * 1 because 1 is the index of the depth view, see the debug view header in imgui
         Device.CreateShaderResourceView(depthStencilTexture, debugSrvDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(_debugResourceDescriptorSize * 1));
+        _depthDebugImGuiViewId = _imGuiRenderer.BindTextureView(depthStencilTexture, debugSrvDesc);
     }
 
     private void CreateFrameResources(out ID3D12Resource[] renderTargets)
@@ -473,6 +477,8 @@ public unsafe class D3D12Renderer : IDisposable
         WaitIdle();
 
         Log.LogInfo("Disposing RTVs and depth stencil");
+        _imGuiRenderer.UnbindTextureView(_depthDebugImGuiViewId);
+
         for (int i = 0; i < SwapChainBufferCount; i++)
         {
             _renderTargets[i].Dispose();
@@ -550,15 +556,23 @@ public unsafe class D3D12Renderer : IDisposable
 
     private int _debugRenderViewIndex = 0;
 
+    private float _depthDebugViewSize = 512f;
+
     private void DrawImGui()
     {
         if (ImGui.Begin("Debug Window"))
         {
             ImGui.Text($"FPS: {ImGui.GetIO().Framerate}");
-            if (ImGui.CollapsingHeader("Debug Views"))
+            if (ImGui.CollapsingHeader("Fullscreen Debug Views"))
             {
                 string[] debugViewNames = ["None", "Depth Buffer"];
                 ImGui.Combo("Texture Debug View", ref _debugRenderViewIndex, debugViewNames, debugViewNames.Length);
+            }
+
+            if (ImGui.CollapsingHeader("Image Views"))
+            {
+                ImGui.SliderFloat("Depth Texture View Size", ref _depthDebugViewSize, 32f, 4096f);
+                ImGui.Image(_depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * _depthDebugViewSize);
             }
         }
         ImGui.End();
