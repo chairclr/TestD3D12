@@ -11,12 +11,26 @@ public class Camera
     private Matrix4x4 _viewMatrix;
     private Matrix4x4 _projectionMatrix;
 
+    // Only cache _viewMatrix on read and when it needs an update
+    private bool _viewNeedsUpdate;
+
     // Cached values of forward, left, and up unit vectors
     private Vector3 _forward;
     private Vector3 _left;
     private Vector3 _up;
 
-    public Matrix4x4 ViewMatrix => _viewMatrix;
+    public Matrix4x4 ViewMatrix
+    {
+        get
+        {
+            if (_viewNeedsUpdate)
+            {
+                UpdateView();
+            }
+
+            return _viewMatrix;
+        }
+    }
     public Matrix4x4 ProjectionMatrix => _projectionMatrix;
 
     public Vector3 Forward => _forward;
@@ -34,7 +48,7 @@ public class Camera
         set
         {
             _position = value;
-            UpdateView();
+            _viewNeedsUpdate = true;
         }
     }
 
@@ -44,7 +58,7 @@ public class Camera
         set
         {
             _rotation = value;
-            UpdateView();
+            _viewNeedsUpdate = true;
         }
     }
 

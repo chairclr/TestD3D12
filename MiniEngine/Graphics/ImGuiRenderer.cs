@@ -74,7 +74,7 @@ public unsafe class ImGuiRenderer : IDisposable
         // 2. Texture sampler (LinearWrap)
         //
         // The vertex shader has a constant buffer, but we don't need to make a descriptor heap entry for it
-        // We allocate +2 here for user textures
+        // We allocate +2 here for the ImGui textures
         _resourceDescriptorHeap = _renderer.Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, MaxBoundTextureViews + 2, DescriptorHeapFlags.ShaderVisible));
         _resourceDescriptorSize = _renderer.Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
