@@ -59,6 +59,9 @@ public unsafe class D3D12Renderer : IDisposable
 
     private readonly ID3D12Resource _vertexBuffer;
     private readonly VertexBufferView _vertexBufferView;
+    private readonly ID3D12Resource _indexBuffer;
+    private readonly IndexBufferView _indexBufferView;
+    private readonly int _indexCount;
 
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
@@ -252,16 +255,34 @@ public unsafe class D3D12Renderer : IDisposable
         _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _pipelineState);
         _commandList.Close();
 
+
+
+        // Test loading from gltf sharp
+        /*SharpGLTF.Schema2.ModelRoot modelRoot = SharpGLTF.Schema2.ModelRoot.Load("/home/chair/test/living_room.glb");
+
+        var mverts = modelRoot.DefaultScene.VisualChildren.Skip(9).First().Mesh.Primitives.First().GetVertexAccessor("POSITION").AsVector3Array();
+        var mindexs = modelRoot.DefaultScene.VisualChildren.Skip(9).First().Mesh.Primitives.First().GetTriangleIndices().ToArray();
+
+        ReadOnlySpan<TriangleVertex> triangleVertices = mverts.Select(x => new TriangleVertex(x, Vector3.One)).ToArray();
+        ReadOnlySpan<int> triangleInd = mindexs.SelectMany(x => new int[] { x.C, x.B, x.A }).ToArray();
+
         uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
-        uint vertexBufferSize = 36 * vertexBufferStride;
+        uint vertexBufferSize = (uint)(triangleVertices.Length * vertexBufferStride);
 
         _vertexBuffer = Device.CreateCommittedResource(
             HeapType.Upload,
             ResourceDescription.Buffer(vertexBufferSize),
             ResourceStates.GenericRead);
 
-        ReadOnlySpan<TriangleVertex> triangleVertices =
-        [
+        uint indexBufferStride = (uint)Unsafe.SizeOf<int>();
+        uint indexBufferSize = (uint)(triangleInd.Length * indexBufferStride);
+
+        _indexBuffer = Device.CreateCommittedResource(
+            HeapType.Upload,
+            ResourceDescription.Buffer(indexBufferSize),
+            ResourceStates.GenericRead);*/
+
+        /*[
             // Front face
             new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
             new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
@@ -309,12 +330,17 @@ public unsafe class D3D12Renderer : IDisposable
             new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
             new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
             new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f))
-        ];
+        ];*/
 
 
-        _vertexBuffer.SetData(triangleVertices);
+        /*_vertexBuffer.SetData(triangleVertices);
         // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
         _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
+
+        _indexBuffer.SetData(triangleInd);
+        _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSize, Format.R32_SInt);
+
+        _indexCount = triangleInd.Length;*/
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
         _fenceValues[_frameIndex]++;
@@ -621,7 +647,8 @@ public unsafe class D3D12Renderer : IDisposable
 
             _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
             _commandList.IASetVertexBuffers(0, _vertexBufferView);
-            _commandList.DrawInstanced(36, 1, 0, 0);
+            _commandList.IASetIndexBuffer(_indexBufferView);
+            _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
         }
 
         if (_debugRenderViewIndex > 0)

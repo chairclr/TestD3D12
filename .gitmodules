@@ -1,0 +1,4 @@
+[submodule "glTF-CSharp-Loader"]
+	path = glTF-CSharp-Loader
+	url = https://github.com/chairclr/glTF-CSharp-Loader
+	branch = stj

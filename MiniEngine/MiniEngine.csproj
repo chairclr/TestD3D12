@@ -15,12 +15,11 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="ppy.SDL3-CS" Version="2025.220.0" />
-    <PackageReference Include="SharpGLTF.Core" Version="1.0.3" />
-    <PackageReference Include="SharpGLTF.Runtime" Version="1.0.3" />
-    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.3" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
     <PackageReference Include="Veldrid.RenderDoc" Version="1.0.1" />
     <PackageReference Include="Vortice.Direct3D12" Version="3.7.3-beta" />
+
+    <ProjectReference Include="../glTF-CSharp-Loader/glTFLoader/glTFLoader.csproj" />
   </ItemGroup>
 
   <ItemGroup>
