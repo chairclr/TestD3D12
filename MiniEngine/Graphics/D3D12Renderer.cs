@@ -28,7 +28,7 @@ public unsafe class D3D12Renderer : IDisposable
     public readonly SDLWindow Window;
 
     public readonly IDXGIFactory4 DXGIFactory;
-    public readonly ID3D12Device2 Device;
+    public readonly ID3D12Device5 Device;
     public readonly ID3D12CommandQueue GraphicsQueue;
     public readonly IDXGISwapChain3 SwapChain;
 
@@ -78,6 +78,10 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12Fence _frameFence;
     private readonly WaitHandle _frameFenceEvent;
     private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
+    private readonly ID3D12RootSignature _rayGenRootSignature;
+    private readonly ID3D12RootSignature _hitRootSignature;
+    private readonly ID3D12RootSignature _missRootSignature;
+    private readonly object _raytracingStateObject;
     private uint _frameIndex;
 
 
@@ -95,7 +99,7 @@ public unsafe class D3D12Renderer : IDisposable
         DXGIFactory = CreateDXGIFactory2<IDXGIFactory4>(false);
 
         // Device creation
-        ID3D12Device2? d3d12Device = default;
+        ID3D12Device5? d3d12Device = default;
 
         // On windows we can normally just create a D3D12 device without specifying the adapter
         // but vkd3d doesn't determine this for us properly, and never sets device->parent,
@@ -349,8 +353,90 @@ public unsafe class D3D12Renderer : IDisposable
             _indexCount = idxs.Length;
         }
 
+        // Just exclude for now
+        if (false)
         {
+            // Descriptor table combining both SRV and UAV
+            RootDescriptorTable1 descriptorTable = new(
+            [
+                // input depth texture
+                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0),
+                
+                // output shadow mask
+                new DescriptorRange1(DescriptorRangeType.UnorderedAccessView, 1, 0, 0, 0)
+            ]);
 
+            RootSignatureDescription1 rayGenSignatureDescription = new(RootSignatureFlags.LocalRootSignature)
+            {
+                Parameters =
+                [
+                    // CBV (b0)
+                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0), ShaderVisibility.All),
+
+                    // Shader resources
+                    new(descriptorTable, ShaderVisibility.All)
+                ]
+            };
+
+            _rayGenRootSignature = Device.CreateRootSignature(rayGenSignatureDescription);
+
+            RootSignatureDescription1 hitRootSignatureDescription = new(RootSignatureFlags.LocalRootSignature);
+            _hitRootSignature = Device.CreateRootSignature(hitRootSignatureDescription);
+
+            RootSignatureDescription1 missRootSignatureDescription = new(RootSignatureFlags.LocalRootSignature);
+            _missRootSignature = Device.CreateRootSignature(missRootSignatureDescription);
+
+            // Create the shaders
+            ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadows/RayTracing");
+
+            // Create the pipeline
+            StateSubObject rayGenLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("RayGen")));
+            StateSubObject hitLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("ClosestHit")));
+            StateSubObject missLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("Miss")));
+
+            StateSubObject hitGroup = new(new HitGroupDescription("HitGroup", HitGroupType.Triangles, closestHitShaderImport: "ClosestHit"));
+
+            StateSubObject raytracingShaderConfig = new(new RaytracingShaderConfig(4 * sizeof(float), 2 * sizeof(float)));
+
+            StateSubObject shaderPayloadAssociation = new(new SubObjectToExportsAssociation(raytracingShaderConfig, "RayGen", "ClosestHit", "Miss"));
+
+            StateSubObject rayGenRootSignatureStateObject = new(new LocalRootSignature(_rayGenRootSignature));
+            StateSubObject rayGenRootSignatureAssociation = new(new SubObjectToExportsAssociation(rayGenRootSignatureStateObject, "RayGen"));
+
+            StateSubObject hitRootSignatureStateObject = new(new LocalRootSignature(_hitRootSignature));
+            StateSubObject hitRootSignatureAssociation = new(new SubObjectToExportsAssociation(hitRootSignatureStateObject, "ClosestHit"));
+
+            StateSubObject missRootSignatureStateObject = new(new LocalRootSignature(_missRootSignature));
+            StateSubObject missRootSignatureAssociation = new(new SubObjectToExportsAssociation(missRootSignatureStateObject, "Miss"));
+
+            StateSubObject raytracingPipelineConfig = new(new RaytracingPipelineConfig(1));
+
+            StateSubObject globalRootSignatureStateObject = new(new GlobalRootSignature(_globalRootSignature));
+
+            StateSubObject[] stateSubObjects =
+            [
+                rayGenLibrary,
+                hitLibrary,
+                missLibrary,
+
+                hitGroup,
+
+                raytracingShaderConfig,
+                shaderPayloadAssociation,
+
+                rayGenRootSignatureStateObject,
+                rayGenRootSignatureAssociation,
+                hitRootSignatureStateObject,
+                hitRootSignatureAssociation,
+                missRootSignatureStateObject,
+                missRootSignatureAssociation,
+
+                raytracingPipelineConfig,
+
+                globalRootSignatureStateObject,
+            ];
+
+            _raytracingStateObject = Device.CreateStateObject(new StateObjectDescription(StateObjectType.RaytracingPipeline, stateSubObjects));
         }
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
