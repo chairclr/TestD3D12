@@ -10,7 +10,7 @@ PS_INPUT VSMain(VS_INPUT input) {
     float4 worldPosition = mul(ViewProjectionMatrix, float4(input.pos, 1.0));
     
     output.pos = worldPosition;
-    output.color = input.color;
+    output.normal = input.normal;
     
     return output;
 }

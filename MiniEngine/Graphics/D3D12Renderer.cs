@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using glTFLoader;
+using glTFLoader.Schema;
 using ImGuiNET;
 using MiniEngine.Input;
 using MiniEngine.Logging;
@@ -228,7 +230,7 @@ public unsafe class D3D12Renderer : IDisposable
         InputElementDescription[] inputElementDescs =
         [
             new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
-            new InputElementDescription("COLOR", 0, Format.R32G32B32_Float, 12, 0)
+            new InputElementDescription("NORMAL", 0, Format.R32G32B32_Float, 12, 0)
         ];
 
         ReadOnlyMemory<byte> triangleVS = ShaderLoader.LoadShaderBytecode("Basic/TriangleVS");
@@ -242,7 +244,7 @@ public unsafe class D3D12Renderer : IDisposable
             InputLayout = new InputLayoutDescription(inputElementDescs),
             SampleMask = uint.MaxValue,
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
-            RasterizerState = RasterizerDescription.CullNone,
+            RasterizerState = RasterizerDescription.CullClockwise,
             BlendState = BlendDescription.Opaque,
             DepthStencilState = DepthStencilDescription.Default,
             RenderTargetFormats = [Format.R8G8B8A8_UNorm],
@@ -255,19 +257,47 @@ public unsafe class D3D12Renderer : IDisposable
         _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _pipelineState);
         _commandList.Close();
 
+        Gltf model = Interface.LoadModel("Assets/Models/living_room.glb");
+        Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
 
+        Scene scene = model.Scenes[model.Scene ?? 0];
+        glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[9]];
+        Mesh mesh = model.Meshes[node.Mesh!.Value];
+        MeshPrimitive primitive = mesh.Primitives[0];
 
-        // Test loading from gltf sharp
-        /*SharpGLTF.Schema2.ModelRoot modelRoot = SharpGLTF.Schema2.ModelRoot.Load("/home/chair/test/living_room.glb");
+        // position data
+        Accessor posAccessor = model.Accessors[primitive.Attributes["POSITION"]];
+        BufferView posView = model.BufferViews[posAccessor.BufferView!.Value];
+        int posOffset = posView.ByteOffset + posAccessor.ByteOffset;
+        int posStride = posView.ByteStride ?? 12; // Vector3
+        ReadOnlySpan<Vector3> posData = MemoryMarshal.Cast<byte, Vector3>(modelData[posOffset..(posOffset + (posStride * posAccessor.Count))]);
 
-        var mverts = modelRoot.DefaultScene.VisualChildren.Skip(9).First().Mesh.Primitives.First().GetVertexAccessor("POSITION").AsVector3Array();
-        var mindexs = modelRoot.DefaultScene.VisualChildren.Skip(9).First().Mesh.Primitives.First().GetTriangleIndices().ToArray();
+        // position data
+        Accessor normalAccessor = model.Accessors[primitive.Attributes["NORMAL"]];
+        BufferView normalView = model.BufferViews[normalAccessor.BufferView!.Value];
+        int normalOffset = normalView.ByteOffset + normalAccessor.ByteOffset;
+        int normalStride = normalView.ByteStride ?? 12; // Vector3
+        ReadOnlySpan<Vector3> normalData = MemoryMarshal.Cast<byte, Vector3>(modelData[normalOffset..(normalOffset + (normalStride * normalAccessor.Count))]);
 
-        ReadOnlySpan<TriangleVertex> triangleVertices = mverts.Select(x => new TriangleVertex(x, Vector3.One)).ToArray();
-        ReadOnlySpan<int> triangleInd = mindexs.SelectMany(x => new int[] { x.C, x.B, x.A }).ToArray();
+        // index data
+        Accessor idxAccessor = model.Accessors[primitive.Indices!.Value];
+        BufferView idxView = model.BufferViews[idxAccessor.BufferView!.Value];
+        int idxOffset = idxView.ByteOffset + idxAccessor.ByteOffset;
+        int idxStride = idxView.ByteStride ?? 4; // int
+        ReadOnlySpan<int> idxData = MemoryMarshal.Cast<byte, int>(modelData[idxOffset..(idxOffset + (idxStride * idxAccessor.Count))]);
+
+        Span<TriangleVertex> verts = new TriangleVertex[posAccessor.Count];
+        Span<int> idxs = new int[idxAccessor.Count];
+
+        for (int i = 0; i < posAccessor.Count; i++)
+        {
+            verts[i] = new TriangleVertex(posData[i], normalData[i]);
+        }
+
+        idxData.CopyTo(idxs);
 
         uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
-        uint vertexBufferSize = (uint)(triangleVertices.Length * vertexBufferStride);
+        uint vertexBufferSize = (uint)(verts.Length * vertexBufferStride);
 
         _vertexBuffer = Device.CreateCommittedResource(
             HeapType.Upload,
@@ -275,72 +305,21 @@ public unsafe class D3D12Renderer : IDisposable
             ResourceStates.GenericRead);
 
         uint indexBufferStride = (uint)Unsafe.SizeOf<int>();
-        uint indexBufferSize = (uint)(triangleInd.Length * indexBufferStride);
+        uint indexBufferSize = (uint)(idxs.Length * indexBufferStride);
 
         _indexBuffer = Device.CreateCommittedResource(
             HeapType.Upload,
             ResourceDescription.Buffer(indexBufferSize),
-            ResourceStates.GenericRead);*/
+            ResourceStates.GenericRead);
 
-        /*[
-            // Front face
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
-
-            // Back face
-            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(1.0f, 1.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(1.0f, 1.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
-
-            // Left face
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
-
-            // Right face
-            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.5f, 0.0f)),
-
-            // Top face
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(1.0f, 0.5f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, 0.5f), new Vector3(1.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(0.5f, 0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
-            new TriangleVertex(new Vector3(-0.5f, 0.5f, -0.5f), new Vector3(0.0f, 1.0f, 1.0f)),
-
-            // Bottom face
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, -0.5f), new Vector3(1.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.0f, 0.0f, 1.0f)),
-            new TriangleVertex(new Vector3(0.5f, -0.5f, 0.5f), new Vector3(0.0f, 1.0f, 0.0f)),
-            new TriangleVertex(new Vector3(-0.5f, -0.5f, 0.5f), new Vector3(1.0f, 0.0f, 0.0f))
-        ];*/
-
-
-        /*_vertexBuffer.SetData(triangleVertices);
+        _vertexBuffer.SetData((ReadOnlySpan<TriangleVertex>)verts);
         // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
         _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
 
-        _indexBuffer.SetData(triangleInd);
-        _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSize, Format.R32_SInt);
+        _indexBuffer.SetData((ReadOnlySpan<int>)idxs);
+        _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSize, Format.R32_UInt);
 
-        _indexCount = triangleInd.Length;*/
+        _indexCount = idxs.Length;
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
         _fenceValues[_frameIndex]++;
@@ -553,7 +532,7 @@ public unsafe class D3D12Renderer : IDisposable
                 _mainCamera.Rotation = Quaternion.CreateFromYawPitchRoll(_firstPersonCameraRotation.X, _firstPersonCameraRotation.Y, _firstPersonCameraRotation.Z);
             }
 
-            float s = 10f * deltaTime;
+            float s = 2f * deltaTime;
             if (ImGui.IsKeyDown(ImGuiKey.W))
             {
                 _firstPersonCameraPosition += _mainCamera.Forward * s;
@@ -736,6 +715,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             _constantBuffer.Dispose();
             _vertexBuffer.Dispose();
+            _indexBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
             {
                 _commandAllocators[i].Dispose();
@@ -781,7 +761,7 @@ public unsafe class D3D12Renderer : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    record struct TriangleVertex(Vector3 position, Vector3 color);
+    private record struct TriangleVertex(Vector3 position, Vector3 normal);
 
     [StructLayout(LayoutKind.Sequential)]
     private record struct Constants(Matrix4x4 ViewProjectionMatrix);
