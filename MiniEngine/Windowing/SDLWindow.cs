@@ -1,12 +1,11 @@
 using System.Numerics;
-using System.Runtime.InteropServices;
 using MiniEngine.Logging;
 using SDL;
 using static SDL.SDL3;
 
 namespace MiniEngine.Windowing;
 
-public unsafe class BaseWindow : IDisposable
+public unsafe class SDLWindow : IDisposable
 {
     private bool _disposed;
 
@@ -59,12 +58,12 @@ public unsafe class BaseWindow : IDisposable
 
     public float AspectRatio => Size.X / Size.Y;
 
-    private BaseWindow(SDL_Window* sdlWindow)
+    private SDLWindow(SDL_Window* sdlWindow)
     {
         SDLWindowHandle = sdlWindow;
     }
 
-    public static BaseWindow CreateWindow(string title, int width, int height, bool resizable = true, bool hidpi = true)
+    public static SDLWindow CreateWindow(string title, int width, int height, bool resizable = true, bool hidpi = true)
     {
         ArgumentNullException.ThrowIfNull(title, nameof(title));
         ArgumentOutOfRangeException.ThrowIfNegative(width, nameof(width));
@@ -90,7 +89,7 @@ public unsafe class BaseWindow : IDisposable
             throw new SDLException("Failed to create SDL_Window");
         }
 
-        return new BaseWindow(sdlWindow);
+        return new SDLWindow(sdlWindow);
     }
 
     protected virtual void Dispose(bool disposing)

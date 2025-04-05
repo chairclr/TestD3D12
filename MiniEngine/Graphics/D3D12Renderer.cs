@@ -25,7 +25,7 @@ public unsafe class D3D12Renderer : IDisposable
 {
     public const int SwapChainBufferCount = 2;
 
-    public readonly BaseWindow Window;
+    public readonly SDLWindow Window;
 
     public readonly IDXGIFactory4 DXGIFactory;
     public readonly ID3D12Device2 Device;
@@ -83,7 +83,7 @@ public unsafe class D3D12Renderer : IDisposable
 
     private bool _disposed;
 
-    public D3D12Renderer(BaseWindow window)
+    public D3D12Renderer(SDLWindow window)
     {
         Window = window;
 

@@ -6,10 +6,10 @@ namespace MiniEngine.Input;
 
 internal class ImGuiController
 {
-    private readonly BaseWindow _window;
+    private readonly SDLWindow _window;
     private readonly nint _imGuiContext;
 
-    public ImGuiController(BaseWindow window, nint imGuiContext)
+    public ImGuiController(SDLWindow window, nint imGuiContext)
     {
         _window = window;
         _imGuiContext = imGuiContext;

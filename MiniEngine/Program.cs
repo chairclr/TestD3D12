@@ -33,7 +33,7 @@ if (!IsSupported(FeatureLevel.Level_12_0))
 Log.LogInfo("Founds support and loaded D3D12 FeatureLevel 12_0");
 
 Log.LogInfo("Creating test window");
-using BaseWindow window = BaseWindow.CreateWindow("MiniEngine Main Window", 1920, 1080);
+using SDLWindow window = SDLWindow.CreateWindow("MiniEngine Main Window", 1920, 1080);
 Log.LogInfo($"Created test window with handle {window.WindowHandle:X}");
 
 Log.LogInfo($"Creating {nameof(D3D12Renderer)}");
