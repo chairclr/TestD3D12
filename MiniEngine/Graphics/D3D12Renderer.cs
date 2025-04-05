@@ -32,6 +32,8 @@ public unsafe class D3D12Renderer : IDisposable
     public readonly ID3D12CommandQueue GraphicsQueue;
     public readonly IDXGISwapChain3 SwapChain;
 
+    private readonly ID3D12RootSignature _globalRootSignature;
+
     public readonly D3D12CopyManager CopyManager;
 
     private readonly ID3D12DescriptorHeap _rtvDescriptorHeap;
@@ -45,8 +47,8 @@ public unsafe class D3D12Renderer : IDisposable
 
     private readonly ID3D12CommandAllocator[] _commandAllocators;
 
-    private readonly ID3D12RootSignature _rootSignature;
-    private readonly ID3D12PipelineState _pipelineState;
+    private readonly ID3D12RootSignature _graphicsRootSignature;
+    private readonly ID3D12PipelineState _graphicsPipelineState;
 
 
     // Debug exclusive stuff
@@ -57,7 +59,7 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12PipelineState _depthDebugPipelineState;
 
 
-    private readonly ID3D12GraphicsCommandList4 _commandList;
+    private readonly ID3D12GraphicsCommandList4 _graphicsCommandList;
 
     private readonly ID3D12Resource _vertexBuffer;
     private readonly VertexBufferView _vertexBufferView;
@@ -67,6 +69,8 @@ public unsafe class D3D12Renderer : IDisposable
 
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
+
+    private readonly bool RayTracingSupported;
 
     private readonly ImGuiRenderer _imGuiRenderer;
     private readonly ImGuiController _imGuiController;
@@ -101,7 +105,7 @@ public unsafe class D3D12Renderer : IDisposable
         // https://github.com/chairclr/vkd3d-proton
         for (uint adapterIndex = 0; DXGIFactory.EnumAdapters(adapterIndex, out IDXGIAdapter? adapter).Success; adapterIndex++)
         {
-            if (D3D12CreateDevice(adapter, FeatureLevel.Level_11_0, out d3d12Device).Success)
+            if (D3D12CreateDevice(adapter, FeatureLevel.Level_12_0, out d3d12Device).Success)
             {
                 adapter.Dispose();
 
@@ -118,13 +122,29 @@ public unsafe class D3D12Renderer : IDisposable
 
         Device = d3d12Device;
 
+        if (Device.Options5.RaytracingTier < RaytracingTier.Tier1_0)
+        {
+            Log.LogWarn("Ray tracing not supported, disabling ray tracing");
+            RayTracingSupported = false;
+        }
+        else
+        {
+            RayTracingSupported = true;
+        }
+
         Log.LogInfo("Creating main GraphicsQueue");
         GraphicsQueue = Device.CreateCommandQueue(CommandListType.Direct);
         GraphicsQueue.Name = "Graphics Queue";
 
+        {
+            RootSignatureDescription1 globalRootSignatureDescription = new(RootSignatureFlags.None);
+
+            _globalRootSignature = Device.CreateRootSignature(globalRootSignatureDescription);
+        }
+
         CopyManager = new(Device, GraphicsQueue);
 
-        RootSignatureFlags rootSignatureFlags = RootSignatureFlags.AllowInputAssemblerInputLayout
+        RootSignatureFlags graphicsRootSignatureFlags = RootSignatureFlags.AllowInputAssemblerInputLayout
             | RootSignatureFlags.DenyHullShaderRootAccess
             | RootSignatureFlags.DenyDomainShaderRootAccess
             | RootSignatureFlags.DenyGeometryShaderRootAccess
@@ -132,47 +152,49 @@ public unsafe class D3D12Renderer : IDisposable
             | RootSignatureFlags.DenyMeshShaderRootAccess;
 
         // Debug pipeline renders a fullscreen triangle and samples from a single SRV onto the screen
-        RootDescriptorTable1 debugSrvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 1));
-        RootSignatureDescription1 debugRootSignatureDesc = new()
         {
-            Flags = rootSignatureFlags,
-            Parameters =
-            [
-                new(debugSrvTable, ShaderVisibility.Pixel)
+            RootDescriptorTable1 debugSrvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 1));
+            RootSignatureDescription1 debugRootSignatureDesc = new()
+            {
+                Flags = graphicsRootSignatureFlags,
+                Parameters =
+                [
+                    new(debugSrvTable, ShaderVisibility.Pixel)
+                ],
+                StaticSamplers =
+                [
+                    new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
             ],
-            StaticSamplers =
-            [
-                new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
-            ],
-        };
-        _debugRootSignature = Device.CreateRootSignature(debugRootSignatureDesc);
-        _debugResourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 16, DescriptorHeapFlags.ShaderVisible));
-        _debugResourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+            };
+            _debugRootSignature = Device.CreateRootSignature(debugRootSignatureDesc);
+            _debugResourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 16, DescriptorHeapFlags.ShaderVisible));
+            _debugResourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
-        // The debug sampler is the first thing in the descriptor heap
-        // Everything else is srvs to textures to view stuff, which is also indexed by _debugRenderViewIndex
-        SamplerDescription debugSamplerDesc = SamplerDescription.LinearClamp;
-        Device.CreateSampler(ref debugSamplerDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
+            // The debug sampler is the first thing in the descriptor heap
+            // Everything else is srvs to textures to view stuff, which is also indexed by _debugRenderViewIndex
+            SamplerDescription debugSamplerDesc = SamplerDescription.LinearClamp;
+            Device.CreateSampler(ref debugSamplerDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
 
-        ReadOnlyMemory<byte> debugVS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenVS");
-        ReadOnlyMemory<byte> depthDebugPS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenDepthPS");
+            ReadOnlyMemory<byte> debugVS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenVS");
+            ReadOnlyMemory<byte> depthDebugPS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenDepthPS");
 
-        GraphicsPipelineStateDescription depthDebugPsoDesc = new()
-        {
-            RootSignature = _debugRootSignature,
-            VertexShader = debugVS,
-            PixelShader = depthDebugPS,
-            SampleMask = uint.MaxValue,
-            PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
-            RasterizerState = RasterizerDescription.CullNone,
-            BlendState = BlendDescription.Opaque,
-            DepthStencilState = DepthStencilDescription.None,
-            RenderTargetFormats = [Format.R8G8B8A8_UNorm],
-            SampleDescription = SampleDescription.Default
-        };
+            GraphicsPipelineStateDescription depthDebugPsoDesc = new()
+            {
+                RootSignature = _debugRootSignature,
+                VertexShader = debugVS,
+                PixelShader = depthDebugPS,
+                SampleMask = uint.MaxValue,
+                PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
+                RasterizerState = RasterizerDescription.CullNone,
+                BlendState = BlendDescription.Opaque,
+                DepthStencilState = DepthStencilDescription.None,
+                RenderTargetFormats = [Format.R8G8B8A8_UNorm],
+                SampleDescription = SampleDescription.Default
+            };
 
-        _depthDebugPipelineState = Device.CreateGraphicsPipelineState(depthDebugPsoDesc);
-        Log.LogInfo("Created debug resources");
+            _depthDebugPipelineState = Device.CreateGraphicsPipelineState(depthDebugPsoDesc);
+            Log.LogInfo("Created debug resources");
+        }
 
         nint imGuiContext = ImGui.CreateContext();
         ImGui.SetCurrentContext(imGuiContext);
@@ -180,146 +202,156 @@ public unsafe class D3D12Renderer : IDisposable
         _imGuiController = new ImGuiController(Window, imGuiContext);
         Log.LogInfo("Created ImGui resources");
 
-        CreateSwapChain(out SwapChain, out _frameIndex);
-
-        _rtvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.RenderTargetView, SwapChainBufferCount));
-        _rtvDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.RenderTargetView);
-
-        _dsvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.DepthStencilView, 1));
-
-        CreateFrameResources(out _renderTargets);
-        CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
-
-        _commandAllocators = new ID3D12CommandAllocator[SwapChainBufferCount];
-        for (int i = 0; i < SwapChainBufferCount; i++)
+        // Frame resources
         {
-            _commandAllocators[i] = Device.CreateCommandAllocator(CommandListType.Direct);
+            CreateSwapChain(out SwapChain, out _frameIndex);
+
+            _rtvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.RenderTargetView, SwapChainBufferCount));
+            _rtvDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.RenderTargetView);
+
+            _dsvDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.DepthStencilView, 1));
+
+            CreateFrameResources(out _renderTargets);
+            CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
+
+            _commandAllocators = new ID3D12CommandAllocator[SwapChainBufferCount];
+            for (int i = 0; i < SwapChainBufferCount; i++)
+            {
+                _commandAllocators[i] = Device.CreateCommandAllocator(CommandListType.Direct);
+            }
+
+            RootSignatureDescription1 rootSignatureDesc = new()
+            {
+                Flags = graphicsRootSignatureFlags,
+                Parameters =
+                [
+                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
+                ],
+                StaticSamplers =
+                [
+                    // Fill with samplers in the future ;)
+                ],
+            };
+
+            _graphicsRootSignature = Device.CreateRootSignature(rootSignatureDesc);
         }
-
-        RootSignatureDescription1 rootSignatureDesc = new()
-        {
-            Flags = rootSignatureFlags,
-            Parameters =
-            [
-                new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
-            ],
-            StaticSamplers =
-            [
-                // Fill with samplers in the future ;)
-            ],
-        };
-
-        _rootSignature = Device.CreateRootSignature(rootSignatureDesc);
 
         _mainCamera = new Camera(90.0f, Window.AspectRatio, 0.05f, 1000.0f);
 
-        // We actually have a separate cbuffer for each swapchain buffer
-        // Later we update only the cbuffer for the current frameIndex
-        uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * D3D12Renderer.SwapChainBufferCount);
-        _constantBuffer = Device.CreateCommittedResource(
+        // Normal render resources
+        {
+            // We actually have a separate cbuffer for each swapchain buffer
+            // Later we update only the cbuffer for the current frameIndex
+            uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * D3D12Renderer.SwapChainBufferCount);
+            _constantBuffer = Device.CreateCommittedResource(
+                    HeapType.Upload,
+                    ResourceDescription.Buffer(cbufferSize),
+                    ResourceStates.GenericRead);
+
+            // Map the entire _constantBuffer, and d3d stores the pointer to that in _constantsMemory
+            fixed (void* pMemory = &_constantsMemory)
+            {
+                _constantBuffer.Map(0, pMemory);
+            }
+
+            InputElementDescription[] inputElementDescs =
+            [
+                new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
+                new InputElementDescription("NORMAL", 0, Format.R32G32B32_Float, 12, 0)
+            ];
+
+            ReadOnlyMemory<byte> triangleVS = ShaderLoader.LoadShaderBytecode("Basic/TriangleVS");
+            ReadOnlyMemory<byte> trianglePS = ShaderLoader.LoadShaderBytecode("Basic/TrianglePS");
+
+            GraphicsPipelineStateDescription psoDesc = new()
+            {
+                RootSignature = _graphicsRootSignature,
+                VertexShader = triangleVS,
+                PixelShader = trianglePS,
+                InputLayout = new InputLayoutDescription(inputElementDescs),
+                SampleMask = uint.MaxValue,
+                PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
+                RasterizerState = RasterizerDescription.CullClockwise,
+                BlendState = BlendDescription.Opaque,
+                DepthStencilState = DepthStencilDescription.Default,
+                RenderTargetFormats = [Format.R8G8B8A8_UNorm],
+                DepthStencilFormat = _depthStencilFormat,
+                SampleDescription = SampleDescription.Default
+            };
+
+            _graphicsPipelineState = Device.CreateGraphicsPipelineState(psoDesc);
+
+            _graphicsCommandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _graphicsPipelineState);
+            _graphicsCommandList.Close();
+
+            Gltf model = Interface.LoadModel("Assets/Models/living_room.glb");
+            Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
+
+            Scene scene = model.Scenes[model.Scene ?? 0];
+            glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[9]];
+            Mesh mesh = model.Meshes[node.Mesh!.Value];
+            MeshPrimitive primitive = mesh.Primitives[0];
+
+            // position data
+            Accessor posAccessor = model.Accessors[primitive.Attributes["POSITION"]];
+            BufferView posView = model.BufferViews[posAccessor.BufferView!.Value];
+            int posOffset = posView.ByteOffset + posAccessor.ByteOffset;
+            int posStride = posView.ByteStride ?? 12; // Vector3
+            ReadOnlySpan<Vector3> posData = MemoryMarshal.Cast<byte, Vector3>(modelData[posOffset..(posOffset + (posStride * posAccessor.Count))]);
+
+            // position data
+            Accessor normalAccessor = model.Accessors[primitive.Attributes["NORMAL"]];
+            BufferView normalView = model.BufferViews[normalAccessor.BufferView!.Value];
+            int normalOffset = normalView.ByteOffset + normalAccessor.ByteOffset;
+            int normalStride = normalView.ByteStride ?? 12; // Vector3
+            ReadOnlySpan<Vector3> normalData = MemoryMarshal.Cast<byte, Vector3>(modelData[normalOffset..(normalOffset + (normalStride * normalAccessor.Count))]);
+
+            // index data
+            Accessor idxAccessor = model.Accessors[primitive.Indices!.Value];
+            BufferView idxView = model.BufferViews[idxAccessor.BufferView!.Value];
+            int idxOffset = idxView.ByteOffset + idxAccessor.ByteOffset;
+            int idxStride = idxView.ByteStride ?? 4; // int
+            ReadOnlySpan<int> idxData = MemoryMarshal.Cast<byte, int>(modelData[idxOffset..(idxOffset + (idxStride * idxAccessor.Count))]);
+
+            Span<TriangleVertex> verts = new TriangleVertex[posAccessor.Count];
+            Span<int> idxs = new int[idxAccessor.Count];
+
+            for (int i = 0; i < posAccessor.Count; i++)
+            {
+                verts[i] = new TriangleVertex(posData[i], normalData[i]);
+            }
+
+            idxData.CopyTo(idxs);
+
+            uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
+            uint vertexBufferSize = (uint)(verts.Length * vertexBufferStride);
+
+            _vertexBuffer = Device.CreateCommittedResource(
                 HeapType.Upload,
-                ResourceDescription.Buffer(cbufferSize),
+                ResourceDescription.Buffer(vertexBufferSize),
                 ResourceStates.GenericRead);
 
-        // Map the entire _constantBuffer, and d3d stores the pointer to that in _constantsMemory
-        fixed (void* pMemory = &_constantsMemory)
-        {
-            _constantBuffer.Map(0, pMemory);
+            uint indexBufferStride = (uint)Unsafe.SizeOf<int>();
+            uint indexBufferSize = (uint)(idxs.Length * indexBufferStride);
+
+            _indexBuffer = Device.CreateCommittedResource(
+                HeapType.Upload,
+                ResourceDescription.Buffer(indexBufferSize),
+                ResourceStates.GenericRead);
+
+            _vertexBuffer.SetData((ReadOnlySpan<TriangleVertex>)verts);
+            // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
+            _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
+
+            _indexBuffer.SetData((ReadOnlySpan<int>)idxs);
+            _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSize, Format.R32_UInt);
+
+            _indexCount = idxs.Length;
         }
 
-        InputElementDescription[] inputElementDescs =
-        [
-            new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
-            new InputElementDescription("NORMAL", 0, Format.R32G32B32_Float, 12, 0)
-        ];
-
-        ReadOnlyMemory<byte> triangleVS = ShaderLoader.LoadShaderBytecode("Basic/TriangleVS");
-        ReadOnlyMemory<byte> trianglePS = ShaderLoader.LoadShaderBytecode("Basic/TrianglePS");
-
-        GraphicsPipelineStateDescription psoDesc = new()
         {
-            RootSignature = _rootSignature,
-            VertexShader = triangleVS,
-            PixelShader = trianglePS,
-            InputLayout = new InputLayoutDescription(inputElementDescs),
-            SampleMask = uint.MaxValue,
-            PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
-            RasterizerState = RasterizerDescription.CullClockwise,
-            BlendState = BlendDescription.Opaque,
-            DepthStencilState = DepthStencilDescription.Default,
-            RenderTargetFormats = [Format.R8G8B8A8_UNorm],
-            DepthStencilFormat = _depthStencilFormat,
-            SampleDescription = SampleDescription.Default
-        };
 
-        _pipelineState = Device.CreateGraphicsPipelineState(psoDesc);
-
-        _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _pipelineState);
-        _commandList.Close();
-
-        Gltf model = Interface.LoadModel("Assets/Models/living_room.glb");
-        Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
-
-        Scene scene = model.Scenes[model.Scene ?? 0];
-        glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[9]];
-        Mesh mesh = model.Meshes[node.Mesh!.Value];
-        MeshPrimitive primitive = mesh.Primitives[0];
-
-        // position data
-        Accessor posAccessor = model.Accessors[primitive.Attributes["POSITION"]];
-        BufferView posView = model.BufferViews[posAccessor.BufferView!.Value];
-        int posOffset = posView.ByteOffset + posAccessor.ByteOffset;
-        int posStride = posView.ByteStride ?? 12; // Vector3
-        ReadOnlySpan<Vector3> posData = MemoryMarshal.Cast<byte, Vector3>(modelData[posOffset..(posOffset + (posStride * posAccessor.Count))]);
-
-        // position data
-        Accessor normalAccessor = model.Accessors[primitive.Attributes["NORMAL"]];
-        BufferView normalView = model.BufferViews[normalAccessor.BufferView!.Value];
-        int normalOffset = normalView.ByteOffset + normalAccessor.ByteOffset;
-        int normalStride = normalView.ByteStride ?? 12; // Vector3
-        ReadOnlySpan<Vector3> normalData = MemoryMarshal.Cast<byte, Vector3>(modelData[normalOffset..(normalOffset + (normalStride * normalAccessor.Count))]);
-
-        // index data
-        Accessor idxAccessor = model.Accessors[primitive.Indices!.Value];
-        BufferView idxView = model.BufferViews[idxAccessor.BufferView!.Value];
-        int idxOffset = idxView.ByteOffset + idxAccessor.ByteOffset;
-        int idxStride = idxView.ByteStride ?? 4; // int
-        ReadOnlySpan<int> idxData = MemoryMarshal.Cast<byte, int>(modelData[idxOffset..(idxOffset + (idxStride * idxAccessor.Count))]);
-
-        Span<TriangleVertex> verts = new TriangleVertex[posAccessor.Count];
-        Span<int> idxs = new int[idxAccessor.Count];
-
-        for (int i = 0; i < posAccessor.Count; i++)
-        {
-            verts[i] = new TriangleVertex(posData[i], normalData[i]);
         }
-
-        idxData.CopyTo(idxs);
-
-        uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
-        uint vertexBufferSize = (uint)(verts.Length * vertexBufferStride);
-
-        _vertexBuffer = Device.CreateCommittedResource(
-            HeapType.Upload,
-            ResourceDescription.Buffer(vertexBufferSize),
-            ResourceStates.GenericRead);
-
-        uint indexBufferStride = (uint)Unsafe.SizeOf<int>();
-        uint indexBufferSize = (uint)(idxs.Length * indexBufferStride);
-
-        _indexBuffer = Device.CreateCommittedResource(
-            HeapType.Upload,
-            ResourceDescription.Buffer(indexBufferSize),
-            ResourceStates.GenericRead);
-
-        _vertexBuffer.SetData((ReadOnlySpan<TriangleVertex>)verts);
-        // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
-        _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
-
-        _indexBuffer.SetData((ReadOnlySpan<int>)idxs);
-        _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSize, Format.R32_UInt);
-
-        _indexCount = idxs.Length;
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
         _fenceValues[_frameIndex]++;
@@ -599,74 +631,74 @@ public unsafe class D3D12Renderer : IDisposable
         Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
 
         _commandAllocators[_frameIndex].Reset();
-        _commandList.Reset(_commandAllocators[_frameIndex], _pipelineState);
+        _graphicsCommandList.Reset(_commandAllocators[_frameIndex], _graphicsPipelineState);
 
         // Indicate that the back buffer will be used as a render target.
-        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.Present, ResourceStates.RenderTarget);
+        _graphicsCommandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.Present, ResourceStates.RenderTarget);
 
         CpuDescriptorHandle rtvDescriptor = new(_rtvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1(), (int)_frameIndex, _rtvDescriptorSize);
         CpuDescriptorHandle dsvDescriptor = _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
-        _commandList.SetGraphicsRootSignature(_rootSignature);
-        _commandList.SetMarker("Triangle Frame");
+        _graphicsCommandList.SetGraphicsRootSignature(_graphicsRootSignature);
+        _graphicsCommandList.SetMarker("Triangle Frame");
         {
             // Set necessary state.
             Color4 clearColor = Colors.CornflowerBlue;
 
-            _commandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
-            _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
-            _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
+            _graphicsCommandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
+            _graphicsCommandList.ClearRenderTargetView(rtvDescriptor, clearColor);
+            _graphicsCommandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
 
             // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
-            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+            _graphicsCommandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
 
-            _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
-            _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
+            _graphicsCommandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
+            _graphicsCommandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _commandList.IASetVertexBuffers(0, _vertexBufferView);
-            _commandList.IASetIndexBuffer(_indexBufferView);
-            _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+            _graphicsCommandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _graphicsCommandList.IASetVertexBuffers(0, _vertexBufferView);
+            _graphicsCommandList.IASetIndexBuffer(_indexBufferView);
+            _graphicsCommandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
         }
 
         if (_debugRenderViewIndex > 0)
         {
-            _commandList.OMSetRenderTargets(rtvDescriptor, null);
+            _graphicsCommandList.OMSetRenderTargets(rtvDescriptor, null);
 
-            _commandList.SetMarker("Debug");
+            _graphicsCommandList.SetMarker("Debug");
 
             switch (_debugRenderViewIndex)
             {
                 case 1:
-                    _commandList.SetPipelineState(_depthDebugPipelineState);
+                    _graphicsCommandList.SetPipelineState(_depthDebugPipelineState);
                     break;
                 default:
                     throw new InvalidOperationException($"No pipeline state for debug render view index {_debugRenderViewIndex}");
             }
 
-            _commandList.SetGraphicsRootSignature(_debugRootSignature);
+            _graphicsCommandList.SetGraphicsRootSignature(_debugRootSignature);
 
-            _commandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
-            _commandList.SetGraphicsRootDescriptorTable(1, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(_debugRenderViewIndex * _debugResourceDescriptorSize));
+            _graphicsCommandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
+            _graphicsCommandList.SetGraphicsRootDescriptorTable(1, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(_debugRenderViewIndex * _debugResourceDescriptorSize));
 
-            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _commandList.DrawInstanced(3, 1, 0, 0);
+            _graphicsCommandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _graphicsCommandList.DrawInstanced(3, 1, 0, 0);
         }
 
         ImGui.Render();
 
-        _commandList.OMSetRenderTargets(rtvDescriptor, null);
-        _commandList.SetMarker("ImGui");
-        _imGuiRenderer.PopulateCommandList(_commandList, _frameIndex, ImGui.GetDrawData());
+        _graphicsCommandList.OMSetRenderTargets(rtvDescriptor, null);
+        _graphicsCommandList.SetMarker("ImGui");
+        _imGuiRenderer.PopulateCommandList(_graphicsCommandList, _frameIndex, ImGui.GetDrawData());
 
         // Indicate that the back buffer will be used to present
-        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
+        _graphicsCommandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
 
-        _commandList.Close();
+        _graphicsCommandList.Close();
 
         // Execute the command list.
-        GraphicsQueue.ExecuteCommandList(_commandList);
+        GraphicsQueue.ExecuteCommandList(_graphicsCommandList);
 
         Result result = SwapChain.Present(1, PresentFlags.None);
 
@@ -725,9 +757,11 @@ public unsafe class D3D12Renderer : IDisposable
             _dsvDescriptorHeap?.Dispose();
             _rtvDescriptorHeap.Dispose();
             _frameFence.Dispose();
-            _commandList.Dispose();
-            _pipelineState.Dispose();
-            _rootSignature.Dispose();
+            _graphicsCommandList.Dispose();
+            _graphicsPipelineState.Dispose();
+            _graphicsRootSignature.Dispose();
+
+            _globalRootSignature.Dispose();
             SwapChain.Dispose();
             GraphicsQueue.Dispose();
 
