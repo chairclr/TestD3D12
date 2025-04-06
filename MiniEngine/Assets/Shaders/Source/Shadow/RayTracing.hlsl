@@ -41,7 +41,7 @@ void RayGen()
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = direction;
-    ray.TMin = 0.001;
+    ray.TMin = 0.005;
     ray.TMax = 10000.0;
 
     ShadowPayload payload = { false };
