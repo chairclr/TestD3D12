@@ -1,4 +1,3 @@
-using System.ComponentModel.Design.Serialization;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -12,7 +11,6 @@ using MiniEngine.Platform;
 using MiniEngine.Windowing;
 using SDL;
 using SharpGen.Runtime;
-using Veldrid;
 using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
@@ -73,6 +71,7 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
 
+    // Ray tracing stuff
     public readonly bool RayTracingSupported;
 
     private readonly ID3D12RootSignature? _rayGenRootSignature;
@@ -90,19 +89,20 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly uint _shaderBindingTableEntrySize;
     private readonly ID3D12Resource? _shaderBindingTableBuffer;
     private readonly ID3D12DescriptorHeap? _raytracingResourceHeap;
-    private readonly ID3D12Resource? _raytracedShadowMask;
+    private ID3D12Resource? _raytracedShadowMask;
 
+    // ImGui
     private readonly ImGuiRenderer _imGuiRenderer;
     private readonly ImGuiController _imGuiController;
 
+    // Sync
     private readonly ID3D12Fence _frameFence;
     private readonly WaitHandle _frameFenceEvent;
     private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
 
     private uint _frameIndex;
 
-
-    private Camera _mainCamera;
+    private readonly Camera _mainCamera;
     private Vector3 _firstPersonCameraRotation = Vector3.Zero;
     private Vector3 _firstPersonCameraPosition = Vector3.Zero;
 
@@ -274,7 +274,7 @@ public unsafe class D3D12Renderer : IDisposable
         {
             // We actually have a separate cbuffer for each swapchain buffer
             // Later we update only the cbuffer for the current frameIndex
-            uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * D3D12Renderer.SwapChainBufferCount);
+            uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * SwapChainBufferCount);
             _constantBuffer = Device.CreateCommittedResource(
                     HeapType.Upload,
                     ResourceDescription.Buffer(cbufferSize),
@@ -597,83 +597,9 @@ public unsafe class D3D12Renderer : IDisposable
                 _raytracingConstantBuffer.Map(0, pMemory);
             }
 
-            ResourceDescription outputBufferDescription = new()
-            {
-                DepthOrArraySize = 1,
-                Dimension = ResourceDimension.Texture2D,
-                Format = Format.R32_Float,
-                Flags = ResourceFlags.AllowUnorderedAccess,
-                Width = (ulong)Window.Size.X,
-                Height = (uint)Window.Size.Y,
-                Layout = TextureLayout.Unknown,
-                MipLevels = 1,
-                SampleDescription = new SampleDescription(1, 0),
-            };
-
-            _raytracedShadowMask = Device.CreateCommittedResource(
-                HeapType.Default,
-                outputBufferDescription,
-                ResourceStates.CopySource);
-
             _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 4, DescriptorHeapFlags.ShaderVisible));
 
-            uint raytracingResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
-
-            CpuDescriptorHandle heapHandle = _raytracingResourceHeap.GetCPUDescriptorHandleForHeapStart1();
-
-            UnorderedAccessViewDescription shadowmaskResourceViewDesc = new() { ViewDimension = UnorderedAccessViewDimension.Texture2D };
-
-            Device.CreateUnorderedAccessView(_raytracedShadowMask, null, shadowmaskResourceViewDesc, heapHandle);
-            heapHandle += (int)raytracingResourceHeapSize;
-
-            ShaderResourceViewDescription accelerationStructureViewDescription = new()
-            {
-                Format = Format.Unknown,
-                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.RaytracingAccelerationStructure,
-                Shader4ComponentMapping = ShaderComponentMapping.Default,
-                RaytracingAccelerationStructure = new()
-                {
-                    Location = _topLevelAccelerationStructure!.GPUVirtualAddress
-                }
-            };
-
-            Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);
-            heapHandle += (int)raytracingResourceHeapSize;
-
-            ShaderResourceViewDescription srvDesc = new()
-            {
-                Format = _depthStencilFormat,
-                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
-                Texture2D = new()
-                {
-                    MipLevels = 1,
-                    MostDetailedMip = 0,
-                }
-            };
-
-            Device.CreateShaderResourceView(_depthStencilTexture, srvDesc, heapHandle);
-            heapHandle += (int)raytracingResourceHeapSize;
-
-            Log.LogInfo("Created raytracing resources");
-
-            ShaderResourceViewDescription debugSrvDesc = new()
-            {
-                Format = outputBufferDescription.Format,
-                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
-                Texture2D = new()
-                {
-                    MipLevels = 1,
-                    MostDetailedMip = 0,
-                },
-                // Forces greyscale, maps xyzw => xxxx
-                Shader4ComponentMapping = ShaderComponentMapping.Encode(
-                    ShaderComponentMappingSource.FromMemoryComponent0,
-                    ShaderComponentMappingSource.FromMemoryComponent0,
-                    ShaderComponentMappingSource.FromMemoryComponent0,
-                    ShaderComponentMappingSource.FromMemoryComponent3),
-            };
-
-            _raytracingShadowImGuiViewId = _imGuiRenderer.BindTextureView(_raytracedShadowMask, debugSrvDesc);
+            CreateShadowRaytracingResources(out _raytracedShadowMask);
         }
 
         if (RayTracingSupported)
@@ -798,7 +724,7 @@ public unsafe class D3D12Renderer : IDisposable
     }
 
     private int _depthDebugImGuiViewId;
-    private int _raytracingShadowImGuiViewId;
+    private int _raytracedShadowMaskImGuiViewId;
 
     private void CreateDepthStencil(out ID3D12Resource depthStencilTexture, out Format depthStencilFormat)
     {
@@ -871,6 +797,91 @@ public unsafe class D3D12Renderer : IDisposable
         }
     }
 
+    private void CreateShadowRaytracingResources(out ID3D12Resource raytracedShadowMask)
+    {
+        if (!RayTracingSupported)
+        {
+            throw new InvalidOperationException();
+        }
+
+        ResourceDescription outputBufferDescription = new()
+        {
+            DepthOrArraySize = 1,
+            Dimension = ResourceDimension.Texture2D,
+            Format = Format.R32_Float,
+            Flags = ResourceFlags.AllowUnorderedAccess,
+            Width = (ulong)Window.Size.X,
+            Height = (uint)Window.Size.Y,
+            Layout = TextureLayout.Unknown,
+            MipLevels = 1,
+            SampleDescription = new SampleDescription(1, 0),
+        };
+
+        raytracedShadowMask = Device.CreateCommittedResource(
+            HeapType.Default,
+            outputBufferDescription,
+            ResourceStates.CopySource);
+
+        uint raytracingResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+
+        CpuDescriptorHandle heapHandle = _raytracingResourceHeap!.GetCPUDescriptorHandleForHeapStart1();
+
+        UnorderedAccessViewDescription shadowmaskResourceViewDesc = new()
+        {
+            ViewDimension = UnorderedAccessViewDimension.Texture2D
+        };
+        Device.CreateUnorderedAccessView(_raytracedShadowMask, null, shadowmaskResourceViewDesc, heapHandle);
+        heapHandle += (int)raytracingResourceHeapSize;
+
+        // TODO: We don't need to build this every time, move to separate method probably
+        ShaderResourceViewDescription accelerationStructureViewDescription = new()
+        {
+            Format = Format.Unknown,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.RaytracingAccelerationStructure,
+            Shader4ComponentMapping = ShaderComponentMapping.Default,
+            RaytracingAccelerationStructure = new()
+            {
+                Location = _topLevelAccelerationStructure!.GPUVirtualAddress
+            }
+        };
+        Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);
+        heapHandle += (int)raytracingResourceHeapSize;
+
+        ShaderResourceViewDescription srvDesc = new()
+        {
+            Format = _depthStencilFormat,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            }
+        };
+        Device.CreateShaderResourceView(_depthStencilTexture, srvDesc, heapHandle);
+        heapHandle += (int)raytracingResourceHeapSize;
+
+        Log.LogInfo("Created raytracing resources");
+
+        ShaderResourceViewDescription debugSrvDesc = new()
+        {
+            Format = outputBufferDescription.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            // Forces greyscale, maps xyzw => xxxx
+            Shader4ComponentMapping = ShaderComponentMapping.Encode(
+                ShaderComponentMappingSource.FromMemoryComponent0,
+                ShaderComponentMappingSource.FromMemoryComponent0,
+                ShaderComponentMappingSource.FromMemoryComponent0,
+                ShaderComponentMappingSource.FromMemoryComponent3),
+        };
+
+        _raytracedShadowMaskImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowMask, debugSrvDesc);
+    }
+
     // Handle resizing the swapchain, render target views, and depth stencil
     private void Resize(int width, int height)
     {
@@ -886,11 +897,21 @@ public unsafe class D3D12Renderer : IDisposable
             _renderTargets[i].Dispose();
         }
         _depthStencilTexture.Dispose();
+        if (RayTracingSupported)
+        {
+            _imGuiRenderer.UnbindTextureView(_raytracedShadowMaskImGuiViewId);
+            _raytracedShadowMask!.Dispose();
+        }
 
         Log.LogInfo("Resizing swapchain buffers");
         SwapChain.ResizeBuffers1(SwapChainBufferCount, (uint)width, (uint)height, Format.R8G8B8A8_UNorm);
         CreateFrameResources(out _renderTargets);
         CreateDepthStencil(out _depthStencilTexture, out _depthStencilFormat);
+
+        if (RayTracingSupported)
+        {
+            CreateShadowRaytracingResources(out _raytracedShadowMask);
+        }
 
         _frameIndex = SwapChain.CurrentBackBufferIndex;
 
@@ -979,7 +1000,7 @@ public unsafe class D3D12Renderer : IDisposable
                 ImGui.Image(_depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * _depthDebugViewSize);
 
                 ImGui.SliderFloat("Shadow Texture View Size", ref _shadowDebugViewSize, 32f, 4096f);
-                ImGui.Image(_raytracingShadowImGuiViewId, Vector2.Normalize(Window.Size) * _shadowDebugViewSize);
+                ImGui.Image(_raytracedShadowMaskImGuiViewId, Vector2.Normalize(Window.Size) * _shadowDebugViewSize);
             }
         }
         ImGui.End();
