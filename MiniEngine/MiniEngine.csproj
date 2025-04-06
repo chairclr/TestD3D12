@@ -41,6 +41,8 @@
 
     <ShaderFiles Include="Debug/FullscreenVS" ShaderProfile="vs_6_0" ShaderEntryPoint="VSMain" />
     <ShaderFiles Include="Debug/FullscreenDepthPS" ShaderProfile="ps_6_0" ShaderEntryPoint="PSMain" />
+
+    <ShaderFiles Include="Shadow/RayTracing" ShaderProfile="lib_6_3" ShaderEntryPoint="UNUSUED" />
   </ItemGroup>
 
   <Target Name="CompileShaders" BeforeTargets="BeforeBuild">

@@ -1,3 +1,4 @@
+using System.ComponentModel.Design.Serialization;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -11,6 +12,8 @@ using MiniEngine.Platform;
 using MiniEngine.Windowing;
 using SDL;
 using SharpGen.Runtime;
+using Veldrid;
+using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
 using Vortice.Direct3D12.Debug;
@@ -59,7 +62,7 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12PipelineState _depthDebugPipelineState;
 
 
-    private readonly ID3D12GraphicsCommandList4 _graphicsCommandList;
+    private readonly ID3D12GraphicsCommandList4 _commandList;
 
     private readonly ID3D12Resource _vertexBuffer;
     private readonly VertexBufferView _vertexBufferView;
@@ -70,7 +73,15 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
 
-    private readonly bool RayTracingSupported;
+    public readonly bool RayTracingSupported;
+
+    private readonly ID3D12RootSignature? _rayGenRootSignature;
+    private readonly ID3D12RootSignature? _hitRootSignature;
+    private readonly ID3D12RootSignature? _missRootSignature;
+    private readonly ID3D12StateObject? _raytracingStateObject;
+    private readonly ID3D12Resource? _bottomLevelAccelerationStructure;
+    private readonly ID3D12Resource? _topLevelAccelerationStructure;
+    private readonly ID3D12Resource? _instanceBuffer;
 
     private readonly ImGuiRenderer _imGuiRenderer;
     private readonly ImGuiController _imGuiController;
@@ -78,10 +89,6 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12Fence _frameFence;
     private readonly WaitHandle _frameFenceEvent;
     private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
-    private readonly ID3D12RootSignature _rayGenRootSignature;
-    private readonly ID3D12RootSignature _hitRootSignature;
-    private readonly ID3D12RootSignature _missRootSignature;
-    private readonly object _raytracingStateObject;
     private uint _frameIndex;
 
 
@@ -240,6 +247,11 @@ public unsafe class D3D12Renderer : IDisposable
             _graphicsRootSignature = Device.CreateRootSignature(rootSignatureDesc);
         }
 
+        _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
+        _fenceValues[_frameIndex]++;
+
+        _frameFenceEvent = PlatformHelper.CreateAutoResetEvent(false);
+
         _mainCamera = new Camera(90.0f, Window.AspectRatio, 0.05f, 1000.0f);
 
         // Normal render resources
@@ -285,8 +297,8 @@ public unsafe class D3D12Renderer : IDisposable
 
             _graphicsPipelineState = Device.CreateGraphicsPipelineState(psoDesc);
 
-            _graphicsCommandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _graphicsPipelineState);
-            _graphicsCommandList.Close();
+            _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _graphicsPipelineState);
+            _commandList.Close();
 
             Gltf model = Interface.LoadModel("Assets/Models/living_room.glb");
             Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
@@ -353,24 +365,23 @@ public unsafe class D3D12Renderer : IDisposable
             _indexCount = idxs.Length;
         }
 
-        // Just exclude for now
-        if (false)
+        if (RayTracingSupported)
         {
             // Descriptor table combining both SRV and UAV
             RootDescriptorTable1 descriptorTable = new(
             [
-                // input depth texture
-                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0),
-                
-                // output shadow mask
-                new DescriptorRange1(DescriptorRangeType.UnorderedAccessView, 1, 0, 0, 0)
+                // Output shadow mask
+                new DescriptorRange1(DescriptorRangeType.UnorderedAccessView, 1, 0, 0, 0), 
+
+                // Input scene bvh and depth texture
+                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 2, 0, 0, 0),
             ]);
 
             RootSignatureDescription1 rayGenSignatureDescription = new(RootSignatureFlags.LocalRootSignature)
             {
                 Parameters =
                 [
-                    // CBV (b0)
+                    // CBV
                     new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0), ShaderVisibility.All),
 
                     // Shader resources
@@ -387,7 +398,7 @@ public unsafe class D3D12Renderer : IDisposable
             _missRootSignature = Device.CreateRootSignature(missRootSignatureDescription);
 
             // Create the shaders
-            ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadows/RayTracing");
+            ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadow/RayTracing");
 
             // Create the pipeline
             StateSubObject rayGenLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("RayGen")));
@@ -396,7 +407,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             StateSubObject hitGroup = new(new HitGroupDescription("HitGroup", HitGroupType.Triangles, closestHitShaderImport: "ClosestHit"));
 
-            StateSubObject raytracingShaderConfig = new(new RaytracingShaderConfig(4 * sizeof(float), 2 * sizeof(float)));
+            StateSubObject raytracingShaderConfig = new(new RaytracingShaderConfig(0, 0));
 
             StateSubObject shaderPayloadAssociation = new(new SubObjectToExportsAssociation(raytracingShaderConfig, "RayGen", "ClosestHit", "Miss"));
 
@@ -437,12 +448,128 @@ public unsafe class D3D12Renderer : IDisposable
             ];
 
             _raytracingStateObject = Device.CreateStateObject(new StateObjectDescription(StateObjectType.RaytracingPipeline, stateSubObjects));
+
+            Log.LogInfo("Created raytracing state object");
         }
 
-        _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
-        _fenceValues[_frameIndex]++;
+        // Build acceleration structures needed for raytracing
+        if (RayTracingSupported)
+        {
+            _commandList.Reset(_commandAllocators[_frameIndex]);
 
-        _frameFenceEvent = PlatformHelper.CreateAutoResetEvent(false);
+            RaytracingGeometryDescription geometryDescription = new()
+            {
+                Triangles = new RaytracingGeometryTrianglesDescription(
+                        new GpuVirtualAddressAndStride(_vertexBuffer.GPUVirtualAddress, (ulong)Unsafe.SizeOf<TriangleVertex>()), Format.R32G32B32_Float, 3,
+                        indexBuffer: _indexBuffer.GPUVirtualAddress, indexFormat: Format.R32_UInt, indexCount: (uint)_indexCount),
+                Flags = RaytracingGeometryFlags.Opaque,
+            };
+
+            BuildRaytracingAccelerationStructureInputs bottomLevelInputs = new()
+            {
+                Type = RaytracingAccelerationStructureType.BottomLevel,
+                Flags = RaytracingAccelerationStructureBuildFlags.None,
+                Layout = ElementsLayout.Array,
+                DescriptorsCount = 1,
+                GeometryDescriptions = [geometryDescription],
+            };
+
+            RaytracingAccelerationStructurePrebuildInfo bottomLevelInfo = Device.GetRaytracingAccelerationStructurePrebuildInfo(bottomLevelInputs);
+
+            if (bottomLevelInfo.ResultDataMaxSizeInBytes == 0)
+            {
+                Log.LogCrit("Failed to create bottom level inputs");
+                throw new Exception();
+            }
+
+            BuildRaytracingAccelerationStructureInputs topLevelInputs = new()
+            {
+                Type = RaytracingAccelerationStructureType.TopLevel,
+                Flags = RaytracingAccelerationStructureBuildFlags.None,
+                Layout = ElementsLayout.Array,
+                DescriptorsCount = 1,
+            };
+
+            RaytracingAccelerationStructurePrebuildInfo topLevelInfo = Device.GetRaytracingAccelerationStructurePrebuildInfo(topLevelInputs);
+
+            if (topLevelInfo.ResultDataMaxSizeInBytes == 0)
+            {
+                Log.LogCrit("Failed to create top level inputs");
+                throw new Exception();
+            }
+
+            using ID3D12Resource scratchResource = Device.CreateCommittedResource(
+                HeapType.Default,
+                ResourceDescription.Buffer(Math.Max(topLevelInfo.ScratchDataSizeInBytes, bottomLevelInfo.ScratchDataSizeInBytes), ResourceFlags.AllowUnorderedAccess),
+                ResourceStates.UnorderedAccess
+                );
+
+            _bottomLevelAccelerationStructure = Device.CreateCommittedResource(
+                HeapType.Default,
+                ResourceDescription.Buffer(Math.Max(topLevelInfo.ScratchDataSizeInBytes, bottomLevelInfo.ResultDataMaxSizeInBytes), ResourceFlags.AllowUnorderedAccess),
+                ResourceStates.RaytracingAccelerationStructure
+                );
+
+            _bottomLevelAccelerationStructure.Name = nameof(_bottomLevelAccelerationStructure);
+
+            _topLevelAccelerationStructure = Device.CreateCommittedResource(
+                HeapType.Default,
+                ResourceDescription.Buffer(Math.Max(topLevelInfo.ScratchDataSizeInBytes, bottomLevelInfo.ResultDataMaxSizeInBytes), ResourceFlags.AllowUnorderedAccess),
+                ResourceStates.RaytracingAccelerationStructure
+                );
+
+            _topLevelAccelerationStructure.Name = nameof(_topLevelAccelerationStructure);
+
+
+            // Create the instance buffer
+            RaytracingInstanceDescription instanceDescription = new()
+            {
+                Transform = new Matrix3x4(1, 0, 0, 0,
+                                          0, 1, 0, 0,
+                                          0, 0, 1, 0),
+                InstanceMask = 0xFF,
+                InstanceID = (UInt24)0,
+                Flags = RaytracingInstanceFlags.None,
+                InstanceContributionToHitGroupIndex = (UInt24)0,
+                AccelerationStructure = _bottomLevelAccelerationStructure.GPUVirtualAddress,
+            };
+
+            _instanceBuffer = Device.CreateCommittedResource(
+                HeapType.Upload,
+                ResourceDescription.Buffer((ulong)sizeof(RaytracingInstanceDescription)),
+                ResourceStates.GenericRead);
+
+            _instanceBuffer.SetData(instanceDescription);
+
+            // Build the acceleration structures
+            _commandList.BuildRaytracingAccelerationStructure(new BuildRaytracingAccelerationStructureDescription
+            {
+                Inputs = bottomLevelInputs,
+                ScratchAccelerationStructureData = scratchResource.GPUVirtualAddress,
+                DestinationAccelerationStructureData = _bottomLevelAccelerationStructure.GPUVirtualAddress,
+            });
+
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_bottomLevelAccelerationStructure)));
+
+            topLevelInputs.InstanceDescriptions = _instanceBuffer.GPUVirtualAddress;
+
+            _commandList.BuildRaytracingAccelerationStructure(new BuildRaytracingAccelerationStructureDescription
+            {
+                Inputs = topLevelInputs,
+                ScratchAccelerationStructureData = scratchResource.GPUVirtualAddress,
+                DestinationAccelerationStructureData = _topLevelAccelerationStructure.GPUVirtualAddress,
+            });
+
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_topLevelAccelerationStructure)));
+
+            _commandList.Close();
+
+            GraphicsQueue.ExecuteCommandList(_commandList);
+
+            WaitIdle();
+
+            Log.LogInfo("Created raytracing acceleration structures");
+        }
 
         Stopwatch deltaTimeWatch = new();
 
@@ -717,74 +844,74 @@ public unsafe class D3D12Renderer : IDisposable
         Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
 
         _commandAllocators[_frameIndex].Reset();
-        _graphicsCommandList.Reset(_commandAllocators[_frameIndex], _graphicsPipelineState);
+        _commandList.Reset(_commandAllocators[_frameIndex], _graphicsPipelineState);
 
         // Indicate that the back buffer will be used as a render target.
-        _graphicsCommandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.Present, ResourceStates.RenderTarget);
+        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.Present, ResourceStates.RenderTarget);
 
         CpuDescriptorHandle rtvDescriptor = new(_rtvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1(), (int)_frameIndex, _rtvDescriptorSize);
         CpuDescriptorHandle dsvDescriptor = _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
-        _graphicsCommandList.SetGraphicsRootSignature(_graphicsRootSignature);
-        _graphicsCommandList.SetMarker("Triangle Frame");
+        _commandList.SetGraphicsRootSignature(_graphicsRootSignature);
+        _commandList.SetMarker("Triangle Frame");
         {
             // Set necessary state.
             Color4 clearColor = Colors.CornflowerBlue;
 
-            _graphicsCommandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
-            _graphicsCommandList.ClearRenderTargetView(rtvDescriptor, clearColor);
-            _graphicsCommandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
+            _commandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
+            _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
+            _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
 
             // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
-            _graphicsCommandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
 
-            _graphicsCommandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
-            _graphicsCommandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
+            _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
+            _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-            _graphicsCommandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _graphicsCommandList.IASetVertexBuffers(0, _vertexBufferView);
-            _graphicsCommandList.IASetIndexBuffer(_indexBufferView);
-            _graphicsCommandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _commandList.IASetVertexBuffers(0, _vertexBufferView);
+            _commandList.IASetIndexBuffer(_indexBufferView);
+            _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
         }
 
         if (_debugRenderViewIndex > 0)
         {
-            _graphicsCommandList.OMSetRenderTargets(rtvDescriptor, null);
+            _commandList.OMSetRenderTargets(rtvDescriptor, null);
 
-            _graphicsCommandList.SetMarker("Debug");
+            _commandList.SetMarker("Debug");
 
             switch (_debugRenderViewIndex)
             {
                 case 1:
-                    _graphicsCommandList.SetPipelineState(_depthDebugPipelineState);
+                    _commandList.SetPipelineState(_depthDebugPipelineState);
                     break;
                 default:
                     throw new InvalidOperationException($"No pipeline state for debug render view index {_debugRenderViewIndex}");
             }
 
-            _graphicsCommandList.SetGraphicsRootSignature(_debugRootSignature);
+            _commandList.SetGraphicsRootSignature(_debugRootSignature);
 
-            _graphicsCommandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
-            _graphicsCommandList.SetGraphicsRootDescriptorTable(1, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(_debugRenderViewIndex * _debugResourceDescriptorSize));
+            _commandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
+            _commandList.SetGraphicsRootDescriptorTable(1, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(_debugRenderViewIndex * _debugResourceDescriptorSize));
 
-            _graphicsCommandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _graphicsCommandList.DrawInstanced(3, 1, 0, 0);
+            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _commandList.DrawInstanced(3, 1, 0, 0);
         }
 
         ImGui.Render();
 
-        _graphicsCommandList.OMSetRenderTargets(rtvDescriptor, null);
-        _graphicsCommandList.SetMarker("ImGui");
-        _imGuiRenderer.PopulateCommandList(_graphicsCommandList, _frameIndex, ImGui.GetDrawData());
+        _commandList.OMSetRenderTargets(rtvDescriptor, null);
+        _commandList.SetMarker("ImGui");
+        _imGuiRenderer.PopulateCommandList(_commandList, _frameIndex, ImGui.GetDrawData());
 
         // Indicate that the back buffer will be used to present
-        _graphicsCommandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
+        _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
 
-        _graphicsCommandList.Close();
+        _commandList.Close();
 
         // Execute the command list.
-        GraphicsQueue.ExecuteCommandList(_graphicsCommandList);
+        GraphicsQueue.ExecuteCommandList(_commandList);
 
         Result result = SwapChain.Present(1, PresentFlags.None);
 
@@ -843,7 +970,7 @@ public unsafe class D3D12Renderer : IDisposable
             _dsvDescriptorHeap?.Dispose();
             _rtvDescriptorHeap.Dispose();
             _frameFence.Dispose();
-            _graphicsCommandList.Dispose();
+            _commandList.Dispose();
             _graphicsPipelineState.Dispose();
             _graphicsRootSignature.Dispose();
 
