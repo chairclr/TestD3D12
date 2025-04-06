@@ -994,7 +994,7 @@ public unsafe class D3D12Renderer : IDisposable
             {
                 foreach ((string name, D3D12GpuTimingManager.GpuTimer timer) in GpuTimingManager.GpuTimers)
                 {
-                    ImGui.Text($"{name}: {timer.TimeMs}");
+                    ImGui.Text($"{name}: {timer.TimeMs:F5}ms");
                 }
             }
 
@@ -1053,6 +1053,7 @@ public unsafe class D3D12Renderer : IDisposable
 
         _commandList.SetMarker("Depth Prepass");
         {
+            GpuTimingManager.BeginTiming("Depth Prepasss");
             _commandList.OMSetRenderTargets(null!, dsvDescriptor);
             _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
@@ -1067,11 +1068,13 @@ public unsafe class D3D12Renderer : IDisposable
             _commandList.IASetVertexBuffers(0, _vertexBufferView);
             _commandList.IASetIndexBuffer(_indexBufferView);
             _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+            GpuTimingManager.EndTiming("Depth Prepasss");
         }
 
         _commandList.SetMarker("Ray Tracing");
         if (RayTracingSupported)
         {
+            GpuTimingManager.BeginTiming("Shadow Ray Tracing");
             _commandList.SetComputeRootSignature(_raytracingRootSignature);
             _commandList.SetDescriptorHeaps(_raytracingResourceHeap);
             _commandList.SetPipelineState1(_raytracingStateObject);
@@ -1106,10 +1109,13 @@ public unsafe class D3D12Renderer : IDisposable
             });
 
             _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_raytracedShadowMask)));
+
+            GpuTimingManager.EndTiming("Shadow Ray Tracing");
         }
 
         _commandList.SetMarker("Triangle Frame");
         {
+            GpuTimingManager.BeginTiming("Main Scene Forward");
             _commandList.SetPipelineState(_graphicsPipelineState);
 
             Color4 clearColor = Colors.CornflowerBlue;
@@ -1127,6 +1133,7 @@ public unsafe class D3D12Renderer : IDisposable
             _commandList.IASetVertexBuffers(0, _vertexBufferView);
             _commandList.IASetIndexBuffer(_indexBufferView);
             _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+            GpuTimingManager.EndTiming("Main Scene Forward");
         }
 
         if (_debugRenderViewIndex > 0)
@@ -1155,9 +1162,11 @@ public unsafe class D3D12Renderer : IDisposable
 
         ImGui.Render();
 
+        GpuTimingManager.BeginTiming("ImGui");
         _commandList.OMSetRenderTargets(rtvDescriptor, null);
         _commandList.SetMarker("ImGui");
         _imGuiRenderer.PopulateCommandList(_commandList, _frameIndex, ImGui.GetDrawData());
+        GpuTimingManager.EndTiming("ImGui");
 
         GpuTimingManager.ResolveQueue();
 
