@@ -8,6 +8,7 @@ using ImGuiNET;
 using MiniEngine.Input;
 using MiniEngine.Logging;
 using MiniEngine.Platform;
+using MiniEngine.UI;
 using MiniEngine.Windowing;
 using SDL;
 using SharpGen.Runtime;
@@ -981,10 +982,6 @@ public unsafe class D3D12Renderer : IDisposable
 
     private int _debugRenderViewIndex = 0;
 
-    private float _depthDebugViewSize = 512f;
-
-    private float _shadowDebugViewSize = 512f;
-
     private void DrawImGui()
     {
         if (ImGui.Begin("Debug Window"))
@@ -1006,11 +1003,13 @@ public unsafe class D3D12Renderer : IDisposable
 
             if (ImGui.CollapsingHeader("Image Views"))
             {
-                ImGui.SliderFloat("Depth Texture View Size", ref _depthDebugViewSize, 32f, 4096f);
+                ImGuiExtensions.ZoomableImage("Depth Texture View", _depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                ImGuiExtensions.ZoomableImage("Shadow Texture View", _raytracedShadowMaskImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                /*ImGui.SliderFloat("Depth Texture View Size", ref _depthDebugViewSize, 32f, 4096f);
                 ImGui.Image(_depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * _depthDebugViewSize);
 
                 ImGui.SliderFloat("Shadow Texture View Size", ref _shadowDebugViewSize, 32f, 4096f);
-                ImGui.Image(_raytracedShadowMaskImGuiViewId, Vector2.Normalize(Window.Size) * _shadowDebugViewSize);
+                ImGui.Image(_raytracedShadowMaskImGuiViewId, Vector2.Normalize(Window.Size) * _shadowDebugViewSize);*/
             }
         }
         ImGui.End();
