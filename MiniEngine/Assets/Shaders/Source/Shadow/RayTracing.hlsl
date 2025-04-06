@@ -46,10 +46,11 @@ void RayGen()
 
     RayDesc ray;
     ray.Origin = origin;
-    ray.Direction = normalize(direction + 0.01 * randomDir);
+    ray.Direction = normalize(direction /*+ 0.01 * randomDir*/);
     ray.TMin = 0.005;
     ray.TMax = 10000.0;
 
+    float acc = 0;
     ShadowPayload payload = { false, 0.0 };
     // Cool optimization here since we don't need any material info
     TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, ~0, 0, 1, 0, ray, payload);

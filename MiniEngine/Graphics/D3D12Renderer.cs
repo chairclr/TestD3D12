@@ -325,7 +325,7 @@ public unsafe class D3D12Renderer : IDisposable
             Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
 
             Scene scene = model.Scenes[model.Scene ?? 0];
-            glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[101]];
+            glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[146]];
             Mesh mesh = model.Meshes[node.Mesh!.Value];
             MeshPrimitive primitive = mesh.Primitives[0];
 
@@ -355,7 +355,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             for (int i = 0; i < posAccessor.Count; i++)
             {
-                verts[i] = new TriangleVertex(posData[i], normalData[i]);
+                verts[i] = new TriangleVertex(posData[i] * 5f, normalData[i]);
             }
 
             idxData.CopyTo(idxs);
