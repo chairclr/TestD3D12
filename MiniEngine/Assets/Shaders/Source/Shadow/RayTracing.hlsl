@@ -19,9 +19,6 @@ void RayGen()
 {
     uint2 index = DispatchRaysIndex().xy;
     uint2 dim = DispatchRaysDimensions().xy;
-    float2 uv = (index + 0.5) / dim;
-
-    
 
     float depth = DepthTexture.Load(int3(index, 0));
 
@@ -30,6 +27,7 @@ void RayGen()
         return;
     }
 
+    float2 uv = (index + 0.5) / dim;
     float2 ndc = uv * 2.0f - 1.0f;
     ndc.y = -ndc.y;
 
