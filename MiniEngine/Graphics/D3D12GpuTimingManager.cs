@@ -24,7 +24,8 @@ public class D3D12GpuTimingManager : IDisposable
     {
         _device = device;
         _commandList = commandList;
-        _maxTimers = maxTimers;
+        // * 2 here because each timer takes 2 slots (start, end)
+        _maxTimers = maxTimers * 2;
 
         _device.AddRef();
         _commandList.AddRef();
