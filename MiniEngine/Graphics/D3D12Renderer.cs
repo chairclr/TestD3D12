@@ -69,6 +69,9 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly IndexBufferView _indexBufferView;
     private readonly int _indexCount;
 
+    private readonly ID3D12DescriptorHeap _resourceDescriptorHeap;
+    private readonly uint _resourceDescriptorSize;
+
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
 
@@ -237,21 +240,6 @@ public unsafe class D3D12Renderer : IDisposable
             {
                 _commandAllocators[i] = Device.CreateCommandAllocator(CommandListType.Direct);
             }
-
-            RootSignatureDescription1 rootSignatureDesc = new()
-            {
-                Flags = graphicsRootSignatureFlags,
-                Parameters =
-                [
-                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
-                ],
-                StaticSamplers =
-                [
-                    // Fill with samplers in the future ;)
-                ],
-            };
-
-            _graphicsRootSignature = Device.CreateRootSignature(rootSignatureDesc);
         }
 
         _frameFence = Device.CreateFence(_fenceValues[_frameIndex]);
@@ -263,6 +251,32 @@ public unsafe class D3D12Renderer : IDisposable
 
         // Normal render resources
         {
+            RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0));
+
+            RootSignatureDescription1 rootSignatureDesc = new()
+            {
+                Flags = graphicsRootSignatureFlags,
+                Parameters =
+                [
+                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
+
+                    new(srvTable, ShaderVisibility.Pixel)
+                ],
+                StaticSamplers =
+                [
+                    //new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
+                ],
+            };
+
+            _graphicsRootSignature = Device.CreateRootSignature(rootSignatureDesc);
+
+            _resourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 2, DescriptorHeapFlags.ShaderVisible));
+            _resourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+
+            CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
+            //SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
+            //Device.CreateSampler(ref samplerDesc, resourceHandle);
+
             // We actually have a separate cbuffer for each swapchain buffer
             // Later we update only the cbuffer for the current frameIndex
             uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * SwapChainBufferCount);
@@ -311,7 +325,7 @@ public unsafe class D3D12Renderer : IDisposable
             Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
 
             Scene scene = model.Scenes[model.Scene ?? 0];
-            glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[9]];
+            glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[101]];
             Mesh mesh = model.Meshes[node.Mesh!.Value];
             MeshPrimitive primitive = mesh.Primitives[0];
 
@@ -850,7 +864,7 @@ public unsafe class D3D12Renderer : IDisposable
         Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);
         heapHandle += (int)raytracingResourceHeapSize;
 
-        ShaderResourceViewDescription srvDesc = new()
+        ShaderResourceViewDescription depthSrvDesc = new()
         {
             Format = _depthStencilFormat,
             ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
@@ -860,7 +874,7 @@ public unsafe class D3D12Renderer : IDisposable
                 MostDetailedMip = 0,
             }
         };
-        Device.CreateShaderResourceView(_depthStencilTexture, srvDesc, heapHandle);
+        Device.CreateShaderResourceView(_depthStencilTexture, depthSrvDesc, heapHandle);
         heapHandle += (int)raytracingResourceHeapSize;
 
         Log.LogInfo("Created raytracing resources");
@@ -883,6 +897,8 @@ public unsafe class D3D12Renderer : IDisposable
         };
 
         _raytracedShadowMaskImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowMask, debugSrvDesc);
+
+        Device.CreateShaderResourceView(raytracedShadowMask, debugSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
     }
 
     // Handle resizing the swapchain, render target views, and depth stencil
@@ -1124,6 +1140,8 @@ public unsafe class D3D12Renderer : IDisposable
 
             // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
             _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+
+            _commandList.SetGraphicsRootDescriptorTable(1, new(_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1(), 0, _resourceDescriptorSize));
 
             _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
             _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);

@@ -7,9 +7,9 @@ cbuffer constants : register(b0) {
 PS_INPUT VSMain(VS_INPUT input) {
     PS_INPUT output;
     
-    float4 worldPosition = mul(ViewProjection, float4(input.pos, 1.0));
+    float4 pos = mul(ViewProjection, float4(input.pos, 1.0));
     
-    output.pos = worldPosition;
+    output.pos = pos;
     output.normal = input.normal;
     
     return output;

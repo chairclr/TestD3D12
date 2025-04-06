@@ -12,7 +12,12 @@ cbuffer constants : register(b0) {
 
 struct ShadowPayload {
     bool hit;
+    float t;
 };
+
+float nrand(float2 uv, float s) {
+    return frac(sin(dot(uv, float2(12.9898, 78.233))) * (43758.5453 * s * 2.0));
+}
 
 [shader("raygeneration")]
 void RayGen()
@@ -28,23 +33,24 @@ void RayGen()
     }
 
     float2 uv = (index + 0.5) / dim;
-    float2 ndc = uv * 2.0f - 1.0f;
+    float2 ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
 
-    float4 clipPos = float4(ndc, depth, 1.0f);
+    float4 clipPos = float4(ndc, depth, 1.0);
     float4 worldPosH = mul(InverseViewProjection, clipPos);
     worldPosH /= worldPosH.w;
 
     float3 origin = worldPosH.xyz;
     float3 direction = normalize(-LightDirection);
+    float3 randomDir = normalize(float3(nrand(uv, depth), nrand(uv + float2(0.1, 0.2), depth), direction.z));
 
     RayDesc ray;
     ray.Origin = origin;
-    ray.Direction = direction;
+    ray.Direction = normalize(direction + 0.01 * randomDir);
     ray.TMin = 0.005;
     ray.TMax = 10000.0;
 
-    ShadowPayload payload = { false };
+    ShadowPayload payload = { false, 0.0 };
     // Cool optimization here since we don't need any material info
     TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, ~0, 0, 1, 0, ray, payload);
 
@@ -55,6 +61,7 @@ void RayGen()
 void ClosestHit(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
     payload.hit = true;
+    payload.t = RayTCurrent();
 }
 
 [shader("miss")]
