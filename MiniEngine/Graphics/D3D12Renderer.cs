@@ -35,6 +35,7 @@ public unsafe class D3D12Renderer : IDisposable
 
 
     public readonly D3D12CopyManager CopyManager;
+    public readonly D3D12GpuTimingManager GpuTimingManager;
 
     private readonly ID3D12DescriptorHeap _rtvDescriptorHeap;
     private readonly uint _rtvDescriptorSize;
@@ -369,6 +370,8 @@ public unsafe class D3D12Renderer : IDisposable
 
             _indexCount = idxs.Length;
         }
+
+        GpuTimingManager = new(Device, _commandList, GraphicsQueue);
 
         if (RayTracingSupported)
         {
@@ -987,6 +990,14 @@ public unsafe class D3D12Renderer : IDisposable
         if (ImGui.Begin("Debug Window"))
         {
             ImGui.Text($"FPS: {ImGui.GetIO().Framerate}");
+            if (ImGui.CollapsingHeader("Gpu Timing"))
+            {
+                foreach ((string name, D3D12GpuTimingManager.GpuTimer timer) in GpuTimingManager.GpuTimers)
+                {
+                    ImGui.Text($"{name}: {timer.TimeMs}");
+                }
+            }
+
             if (ImGui.CollapsingHeader("Fullscreen Debug Views"))
             {
                 string[] debugViewNames = ["None", "Depth Buffer"];
@@ -1026,6 +1037,8 @@ public unsafe class D3D12Renderer : IDisposable
                 Unsafe.CopyBlock(dest, &raytracingConstants, (uint)Unsafe.SizeOf<RaytracingConstants>());
             }
         }
+
+        GpuTimingManager.NewFrame();
 
         _commandAllocators[_frameIndex].Reset();
         _commandList.Reset(_commandAllocators[_frameIndex], _graphicsPipelineState);
@@ -1146,6 +1159,8 @@ public unsafe class D3D12Renderer : IDisposable
         _commandList.SetMarker("ImGui");
         _imGuiRenderer.PopulateCommandList(_commandList, _frameIndex, ImGui.GetDrawData());
 
+        GpuTimingManager.ResolveQueue();
+
         // Indicate that the back buffer will be used to present
         _commandList.ResourceBarrierTransition(_renderTargets[_frameIndex], ResourceStates.RenderTarget, ResourceStates.Present);
 
@@ -1180,6 +1195,8 @@ public unsafe class D3D12Renderer : IDisposable
 
         // Set the fence value for the next frame
         _fenceValues[_frameIndex] = currentFenceValue + 1;
+
+        GpuTimingManager.EndFrame();
     }
 
     protected virtual void Dispose(bool disposing)
@@ -1192,6 +1209,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             _frameFenceEvent.Dispose();
 
+            GpuTimingManager.Dispose();
             CopyManager.Dispose();
             _imGuiRenderer.Dispose();
 
