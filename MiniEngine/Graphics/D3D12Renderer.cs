@@ -33,7 +33,6 @@ public unsafe class D3D12Renderer : IDisposable
     public readonly ID3D12CommandQueue GraphicsQueue;
     public readonly IDXGISwapChain3 SwapChain;
 
-    private readonly ID3D12RootSignature _raytracingRootSignature;
 
     public readonly D3D12CopyManager CopyManager;
 
@@ -74,6 +73,7 @@ public unsafe class D3D12Renderer : IDisposable
     // Ray tracing stuff
     public readonly bool RayTracingSupported;
 
+    private readonly ID3D12RootSignature? _raytracingRootSignature;
     private readonly ID3D12RootSignature? _rayGenRootSignature;
     private readonly ID3D12RootSignature? _hitRootSignature;
     private readonly ID3D12RootSignature? _missRootSignature;
@@ -157,17 +157,6 @@ public unsafe class D3D12Renderer : IDisposable
         GraphicsQueue = Device.CreateCommandQueue(CommandListType.Direct);
         GraphicsQueue.Name = "Graphics Queue";
 
-        {
-            RootSignatureDescription1 globalRootSignatureDescription = new(RootSignatureFlags.None)
-            {
-                Parameters =
-                [
-                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.All),
-                ]
-            };
-
-            _raytracingRootSignature = Device.CreateRootSignature(globalRootSignatureDescription);
-        }
 
         CopyManager = new(Device, GraphicsQueue);
 
@@ -383,6 +372,16 @@ public unsafe class D3D12Renderer : IDisposable
 
         if (RayTracingSupported)
         {
+            RootSignatureDescription1 raytracingRootSignatureDesc = new(RootSignatureFlags.None)
+            {
+                Parameters =
+                [
+                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.All),
+                ]
+            };
+
+            _raytracingRootSignature = Device.CreateRootSignature(raytracingRootSignatureDesc);
+
             // Descriptor table combining both SRV and UAV
             RootDescriptorTable1 descriptorTable = new(
             [
@@ -393,7 +392,7 @@ public unsafe class D3D12Renderer : IDisposable
                 new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 2, 0, 0, 1),
             ]);
 
-            RootSignatureDescription1 rayGenSignatureDescription = new(RootSignatureFlags.LocalRootSignature)
+            RootSignatureDescription1 rayGenSignatureDesc = new(RootSignatureFlags.LocalRootSignature)
             {
                 Parameters =
                 [
@@ -402,13 +401,13 @@ public unsafe class D3D12Renderer : IDisposable
                 ]
             };
 
-            _rayGenRootSignature = Device.CreateRootSignature(rayGenSignatureDescription);
+            _rayGenRootSignature = Device.CreateRootSignature(rayGenSignatureDesc);
 
-            RootSignatureDescription1 hitRootSignatureDescription = new(RootSignatureFlags.LocalRootSignature);
-            _hitRootSignature = Device.CreateRootSignature(hitRootSignatureDescription);
+            RootSignatureDescription1 hitRootSignatureDesc = new(RootSignatureFlags.LocalRootSignature);
+            _hitRootSignature = Device.CreateRootSignature(hitRootSignatureDesc);
 
-            RootSignatureDescription1 missRootSignatureDescription = new(RootSignatureFlags.LocalRootSignature);
-            _missRootSignature = Device.CreateRootSignature(missRootSignatureDescription);
+            RootSignatureDescription1 missRootSignatureDesc = new(RootSignatureFlags.LocalRootSignature);
+            _missRootSignature = Device.CreateRootSignature(missRootSignatureDesc);
 
             // Create the shaders
             ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadow/RayTracing");
@@ -1200,6 +1199,23 @@ public unsafe class D3D12Renderer : IDisposable
             _debugRootSignature.Dispose();
             _debugResourceDescriptorHeap.Dispose();
 
+            if (RayTracingSupported)
+            {
+                _raytracingRootSignature?.Dispose();
+                _raytracedShadowMask?.Dispose();
+                _raytracingStateObject?.Dispose();
+                _raytracingResourceHeap?.Dispose();
+                _raytracingConstantBuffer?.Dispose();
+                _raytracingStateObjectProperties?.Dispose();
+                _rayGenRootSignature?.Dispose();
+                _hitRootSignature?.Dispose();
+                _missRootSignature?.Dispose();
+                _topLevelAccelerationStructure?.Dispose();
+                _bottomLevelAccelerationStructure?.Dispose();
+                _instanceBuffer?.Dispose();
+                _shaderBindingTableBuffer?.Dispose();
+            }
+
             _constantBuffer.Dispose();
             _vertexBuffer.Dispose();
             _indexBuffer.Dispose();
@@ -1216,7 +1232,6 @@ public unsafe class D3D12Renderer : IDisposable
             _graphicsPipelineState.Dispose();
             _graphicsRootSignature.Dispose();
 
-            _raytracingRootSignature.Dispose();
             SwapChain.Dispose();
             GraphicsQueue.Dispose();
 
