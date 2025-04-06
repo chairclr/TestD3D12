@@ -7,8 +7,7 @@ static const float3 LightDirection = normalize(float3(-1.4, -2.0, 2.6));
 
 // Constants
 cbuffer constants : register(b0) {
-    float4x4 InverseViewProjection;
-    //float3 LightDirection;
+    column_major float4x4 InverseViewProjection;
 }
 
 struct ShadowPayload {
@@ -22,14 +21,23 @@ void RayGen()
     uint2 dim = DispatchRaysDimensions().xy;
     float2 uv = (index + 0.5) / dim;
 
-    // Find the world space position of the current pixel, based on the depth texture
-    float depth = DepthTexture.Load(int3(index, 0));
-    float4 clipPos = float4(uv * 2.0f - 1.0f, depth, 1.0f);
-    float4 worldPosH = mul(clipPos, InverseViewProjection);
-    float3 worldPos = worldPosH.xyz / worldPosH.w;
+    
 
-    // Send the ray in the direction of the light
-    float3 origin = worldPos;
+    float depth = DepthTexture.Load(int3(index, 0));
+
+    if (depth >= 1.0) {
+        ShadowMask[index] = 0.0;
+        return;
+    }
+
+    float2 ndc = uv * 2.0f - 1.0f;
+    ndc.y = -ndc.y;
+
+    float4 clipPos = float4(ndc, depth, 1.0f);
+    float4 worldPosH = mul(InverseViewProjection, clipPos);
+    worldPosH /= worldPosH.w;
+
+    float3 origin = worldPosH.xyz;
     float3 direction = normalize(-LightDirection);
 
     RayDesc ray;
@@ -42,7 +50,7 @@ void RayGen()
     // Cool optimization here since we don't need any material info
     TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, ~0, 0, 1, 0, ray, payload);
 
-    ShadowMask[index] = payload.hit ? 0.0 : 1.0;
+    ShadowMask[index] = payload.hit ? 1.0 : 0.0;
 }
 
 [shader("closesthit")]

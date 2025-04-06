@@ -35,7 +35,7 @@ public unsafe class D3D12Renderer : IDisposable
     public readonly ID3D12CommandQueue GraphicsQueue;
     public readonly IDXGISwapChain3 SwapChain;
 
-    private readonly ID3D12RootSignature _globalRootSignature;
+    private readonly ID3D12RootSignature _raytracingRootSignature;
 
     public readonly D3D12CopyManager CopyManager;
 
@@ -83,12 +83,22 @@ public unsafe class D3D12Renderer : IDisposable
     private readonly ID3D12Resource? _topLevelAccelerationStructure;
     private readonly ID3D12Resource? _instanceBuffer;
 
+    private readonly ID3D12Resource? _raytracingConstantBuffer;
+    private byte* _raytracingConstantsMemory = null;
+
+    private readonly ID3D12StateObjectProperties? _raytracingStateObjectProperties;
+    private readonly uint _shaderBindingTableEntrySize;
+    private readonly ID3D12Resource? _shaderBindingTableBuffer;
+    private readonly ID3D12DescriptorHeap? _raytracingResourceHeap;
+    private readonly ID3D12Resource? _raytracedShadowMask;
+
     private readonly ImGuiRenderer _imGuiRenderer;
     private readonly ImGuiController _imGuiController;
 
     private readonly ID3D12Fence _frameFence;
     private readonly WaitHandle _frameFenceEvent;
     private readonly ulong[] _fenceValues = new ulong[SwapChainBufferCount];
+
     private uint _frameIndex;
 
 
@@ -148,9 +158,15 @@ public unsafe class D3D12Renderer : IDisposable
         GraphicsQueue.Name = "Graphics Queue";
 
         {
-            RootSignatureDescription1 globalRootSignatureDescription = new(RootSignatureFlags.None);
+            RootSignatureDescription1 globalRootSignatureDescription = new(RootSignatureFlags.None)
+            {
+                Parameters =
+                [
+                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.All),
+                ]
+            };
 
-            _globalRootSignature = Device.CreateRootSignature(globalRootSignatureDescription);
+            _raytracingRootSignature = Device.CreateRootSignature(globalRootSignatureDescription);
         }
 
         CopyManager = new(Device, GraphicsQueue);
@@ -175,7 +191,7 @@ public unsafe class D3D12Renderer : IDisposable
                 StaticSamplers =
                 [
                     new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
-            ],
+                ],
             };
             _debugRootSignature = Device.CreateRootSignature(debugRootSignatureDesc);
             _debugResourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 16, DescriptorHeapFlags.ShaderVisible));
@@ -373,19 +389,16 @@ public unsafe class D3D12Renderer : IDisposable
                 // Output shadow mask
                 new DescriptorRange1(DescriptorRangeType.UnorderedAccessView, 1, 0, 0, 0), 
 
-                // Input scene bvh and depth texture
-                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 2, 0, 0, 0),
+                // Input scene bvh and then depth texture
+                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 2, 0, 0, 1),
             ]);
 
             RootSignatureDescription1 rayGenSignatureDescription = new(RootSignatureFlags.LocalRootSignature)
             {
                 Parameters =
                 [
-                    // CBV
-                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0), ShaderVisibility.All),
-
                     // Shader resources
-                    new(descriptorTable, ShaderVisibility.All)
+                    new(descriptorTable, ShaderVisibility.All),
                 ]
             };
 
@@ -422,7 +435,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             StateSubObject raytracingPipelineConfig = new(new RaytracingPipelineConfig(1));
 
-            StateSubObject globalRootSignatureStateObject = new(new GlobalRootSignature(_globalRootSignature));
+            StateSubObject globalRootSignatureStateObject = new(new GlobalRootSignature(_raytracingRootSignature));
 
             StateSubObject[] stateSubObjects =
             [
@@ -571,6 +584,139 @@ public unsafe class D3D12Renderer : IDisposable
             Log.LogInfo("Created raytracing acceleration structures");
         }
 
+        if (RayTracingSupported)
+        {
+            uint cbufferSize = (uint)(Unsafe.SizeOf<RaytracingConstants>() * SwapChainBufferCount);
+            _raytracingConstantBuffer = Device.CreateCommittedResource(
+                    HeapType.Upload,
+                    ResourceDescription.Buffer(cbufferSize),
+                    ResourceStates.GenericRead);
+
+            fixed (void* pMemory = &_raytracingConstantsMemory)
+            {
+                _raytracingConstantBuffer.Map(0, pMemory);
+            }
+
+            ResourceDescription outputBufferDescription = new()
+            {
+                DepthOrArraySize = 1,
+                Dimension = ResourceDimension.Texture2D,
+                Format = Format.R32_Float,
+                Flags = ResourceFlags.AllowUnorderedAccess,
+                Width = (ulong)Window.Size.X,
+                Height = (uint)Window.Size.Y,
+                Layout = TextureLayout.Unknown,
+                MipLevels = 1,
+                SampleDescription = new SampleDescription(1, 0),
+            };
+
+            _raytracedShadowMask = Device.CreateCommittedResource(
+                HeapType.Default,
+                outputBufferDescription,
+                ResourceStates.CopySource);
+
+            _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 4, DescriptorHeapFlags.ShaderVisible));
+
+            uint raytracingResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+
+            CpuDescriptorHandle heapHandle = _raytracingResourceHeap.GetCPUDescriptorHandleForHeapStart1();
+
+            UnorderedAccessViewDescription shadowmaskResourceViewDesc = new() { ViewDimension = UnorderedAccessViewDimension.Texture2D };
+
+            Device.CreateUnorderedAccessView(_raytracedShadowMask, null, shadowmaskResourceViewDesc, heapHandle);
+            heapHandle += (int)raytracingResourceHeapSize;
+
+            ShaderResourceViewDescription accelerationStructureViewDescription = new()
+            {
+                Format = Format.Unknown,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.RaytracingAccelerationStructure,
+                Shader4ComponentMapping = ShaderComponentMapping.Default,
+                RaytracingAccelerationStructure = new()
+                {
+                    Location = _topLevelAccelerationStructure!.GPUVirtualAddress
+                }
+            };
+
+            Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);
+            heapHandle += (int)raytracingResourceHeapSize;
+
+            ShaderResourceViewDescription srvDesc = new()
+            {
+                Format = _depthStencilFormat,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+                Texture2D = new()
+                {
+                    MipLevels = 1,
+                    MostDetailedMip = 0,
+                }
+            };
+
+            Device.CreateShaderResourceView(_depthStencilTexture, srvDesc, heapHandle);
+            heapHandle += (int)raytracingResourceHeapSize;
+
+            Log.LogInfo("Created raytracing resources");
+
+            ShaderResourceViewDescription debugSrvDesc = new()
+            {
+                Format = outputBufferDescription.Format,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+                Texture2D = new()
+                {
+                    MipLevels = 1,
+                    MostDetailedMip = 0,
+                },
+                // Forces greyscale, maps xyzw => xxxx
+                Shader4ComponentMapping = ShaderComponentMapping.Encode(
+                    ShaderComponentMappingSource.FromMemoryComponent0,
+                    ShaderComponentMappingSource.FromMemoryComponent0,
+                    ShaderComponentMappingSource.FromMemoryComponent0,
+                    ShaderComponentMappingSource.FromMemoryComponent3),
+            };
+
+            _raytracingShadowImGuiViewId = _imGuiRenderer.BindTextureView(_raytracedShadowMask, debugSrvDesc);
+        }
+
+        if (RayTracingSupported)
+        {
+            static uint Align(uint value, uint alignment)
+            {
+                return ((value + alignment - 1) / alignment) * alignment;
+            }
+
+            _raytracingStateObjectProperties = _raytracingStateObject!.QueryInterface<ID3D12StateObjectProperties>();
+
+            _shaderBindingTableEntrySize = D3D12.ShaderIdentifierSizeInBytes;
+            _shaderBindingTableEntrySize += 8; // Ray generator descriptor table
+            _shaderBindingTableEntrySize = Align(_shaderBindingTableEntrySize, D3D12.RaytracingShaderRecordByteAlignment);
+
+            ulong shaderBindingTableSize = _shaderBindingTableEntrySize * 3;
+
+            _shaderBindingTableBuffer = Device.CreateCommittedResource(
+                HeapType.Upload,
+                ResourceDescription.Buffer(shaderBindingTableSize),
+                ResourceStates.GenericRead);
+
+            byte* shaderBindingTableBufferDataPointer;
+            _shaderBindingTableBuffer.Map(0, &shaderBindingTableBufferDataPointer).CheckError();
+
+            unsafe
+            {
+                Unsafe.CopyBlockUnaligned((void*)shaderBindingTableBufferDataPointer, (void*)_raytracingStateObjectProperties.GetShaderIdentifier("RayGen"), D3D12.ShaderIdentifierSizeInBytes);
+
+                *(GpuDescriptorHandle*)(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 0 + D3D12.ShaderIdentifierSizeInBytes) = _raytracingResourceHeap!.GetGPUDescriptorHandleForHeapStart1();
+
+                Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 1, (void*)_raytracingStateObjectProperties.GetShaderIdentifier("HitGroup"), D3D12.ShaderIdentifierSizeInBytes);
+
+                *(ulong*)(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 1 + D3D12.ShaderIdentifierSizeInBytes) = _vertexBuffer.GPUVirtualAddress;
+
+                Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 2, (void*)_raytracingStateObjectProperties.GetShaderIdentifier("Miss"), D3D12.ShaderIdentifierSizeInBytes);
+            }
+
+            _shaderBindingTableBuffer.Unmap(0);
+
+            Log.LogInfo("Created raytracing shader binding table");
+        }
+
         Stopwatch deltaTimeWatch = new();
 
         bool exit = false;
@@ -652,6 +798,7 @@ public unsafe class D3D12Renderer : IDisposable
     }
 
     private int _depthDebugImGuiViewId;
+    private int _raytracingShadowImGuiViewId;
 
     private void CreateDepthStencil(out ID3D12Resource depthStencilTexture, out Format depthStencilFormat)
     {
@@ -813,6 +960,8 @@ public unsafe class D3D12Renderer : IDisposable
 
     private float _depthDebugViewSize = 512f;
 
+    private float _shadowDebugViewSize = 512f;
+
     private void DrawImGui()
     {
         if (ImGui.Begin("Debug Window"))
@@ -828,6 +977,9 @@ public unsafe class D3D12Renderer : IDisposable
             {
                 ImGui.SliderFloat("Depth Texture View Size", ref _depthDebugViewSize, 32f, 4096f);
                 ImGui.Image(_depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * _depthDebugViewSize);
+
+                ImGui.SliderFloat("Shadow Texture View Size", ref _shadowDebugViewSize, 32f, 4096f);
+                ImGui.Image(_raytracingShadowImGuiViewId, Vector2.Normalize(Window.Size) * _shadowDebugViewSize);
             }
         }
         ImGui.End();
@@ -839,9 +991,21 @@ public unsafe class D3D12Renderer : IDisposable
         // as mentioned before, every frame that can be in flight gets its own constant buffer
         //
         // This could maybe be simplified so that there's only one constant buffer, but idk; the directx samples do it like this
-        Constants constants = new(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix);
-        void* dest = _constantsMemory + (Unsafe.SizeOf<Constants>() * _frameIndex);
-        Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
+        {
+            Constants constants = new(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix);
+            void* dest = _constantsMemory + Unsafe.SizeOf<Constants>() * _frameIndex;
+            Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
+        }
+
+        if (RayTracingSupported)
+        {
+            if (Matrix4x4.Invert(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix, out Matrix4x4 inverseViewProjection))
+            {
+                RaytracingConstants raytracingConstants = new(inverseViewProjection);
+                void* dest = _raytracingConstantsMemory + Unsafe.SizeOf<RaytracingConstants>() * _frameIndex;
+                Unsafe.CopyBlock(dest, &raytracingConstants, (uint)Unsafe.SizeOf<RaytracingConstants>());
+            }
+        }
 
         _commandAllocators[_frameIndex].Reset();
         _commandList.Reset(_commandAllocators[_frameIndex], _graphicsPipelineState);
@@ -853,15 +1017,72 @@ public unsafe class D3D12Renderer : IDisposable
         CpuDescriptorHandle dsvDescriptor = _dsvDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
 
         _commandList.SetGraphicsRootSignature(_graphicsRootSignature);
+
+        _commandList.SetMarker("Depth Prepass");
+        {
+            _commandList.OMSetRenderTargets(null!, dsvDescriptor);
+            _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
+
+
+            // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
+            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+
+            _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
+            _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
+
+            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _commandList.IASetVertexBuffers(0, _vertexBufferView);
+            _commandList.IASetIndexBuffer(_indexBufferView);
+            _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+        }
+
+        _commandList.SetMarker("Ray Tracing");
+        if (RayTracingSupported)
+        {
+            _commandList.SetComputeRootSignature(_raytracingRootSignature);
+            _commandList.SetDescriptorHeaps(_raytracingResourceHeap);
+            _commandList.SetPipelineState1(_raytracingStateObject);
+
+            _commandList.SetComputeRootConstantBufferView(0, _raytracingConstantBuffer!.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<RaytracingConstants>()));
+
+            _commandList.DispatchRays(new DispatchRaysDescription
+            {
+                Width = (uint)Window.Size.X,
+                Height = (uint)Window.Size.Y,
+                Depth = 1u,
+
+                RayGenerationShaderRecord = new GpuVirtualAddressRange
+                {
+                    StartAddress = _shaderBindingTableBuffer!.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 0,
+                    SizeInBytes = (ulong)_shaderBindingTableEntrySize,
+                },
+
+                HitGroupTable = new GpuVirtualAddressRangeAndStride
+                {
+                    StartAddress = _shaderBindingTableBuffer.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 1,
+                    SizeInBytes = (ulong)_shaderBindingTableEntrySize,
+                    StrideInBytes = (ulong)_shaderBindingTableEntrySize,
+                },
+
+                MissShaderTable = new GpuVirtualAddressRangeAndStride
+                {
+                    StartAddress = _shaderBindingTableBuffer.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 2,
+                    SizeInBytes = (ulong)_shaderBindingTableEntrySize,
+                    StrideInBytes = (ulong)_shaderBindingTableEntrySize,
+                },
+            });
+
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_raytracedShadowMask)));
+        }
+
         _commandList.SetMarker("Triangle Frame");
         {
-            // Set necessary state.
+            _commandList.SetPipelineState(_graphicsPipelineState);
+
             Color4 clearColor = Colors.CornflowerBlue;
 
             _commandList.OMSetRenderTargets(rtvDescriptor, dsvDescriptor);
             _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
-            _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
-
 
             // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
             _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
@@ -974,7 +1195,7 @@ public unsafe class D3D12Renderer : IDisposable
             _graphicsPipelineState.Dispose();
             _graphicsRootSignature.Dispose();
 
-            _globalRootSignature.Dispose();
+            _raytracingRootSignature.Dispose();
             SwapChain.Dispose();
             GraphicsQueue.Dispose();
 
@@ -1012,4 +1233,7 @@ public unsafe class D3D12Renderer : IDisposable
 
     [StructLayout(LayoutKind.Sequential)]
     private record struct Constants(Matrix4x4 ViewProjectionMatrix);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection);
 }
