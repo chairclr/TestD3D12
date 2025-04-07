@@ -10,6 +10,7 @@ PS_INPUT VSMain(VS_INPUT input) {
     float4 pos = mul(ViewProjection, float4(input.pos, 1.0));
     
     output.pos = pos;
+    output.world_pos = float4(input.pos, 1.0);
     output.normal = input.normal;
     
     return output;

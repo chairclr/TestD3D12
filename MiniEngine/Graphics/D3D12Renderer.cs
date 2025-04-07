@@ -71,7 +71,8 @@ public unsafe partial class D3D12Renderer : IDisposable
     private readonly List<Mesh> _meshes = [];
 
     // Ray tracing stuff
-    public readonly bool RayTracingSupported;
+    private static bool s_rayTracingSupported;
+    public static bool RayTracingSupported => s_rayTracingSupported;
 
     private readonly ID3D12DescriptorHeap? _raytracingResourceHeap;
     private ID3D12Resource? _raytracedShadowMask;
@@ -131,11 +132,11 @@ public unsafe partial class D3D12Renderer : IDisposable
         if (Device.Options5.RaytracingTier < RaytracingTier.Tier1_0)
         {
             Log.LogWarn("Ray tracing not supported, disabling ray tracing");
-            RayTracingSupported = false;
+            s_rayTracingSupported = false;
         }
         else
         {
-            RayTracingSupported = true;
+            s_rayTracingSupported = true;
         }
 
         Log.LogInfo("Creating main GraphicsQueue");
@@ -318,37 +319,12 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             _commandList.Reset(_commandAllocators[_frameIndex]);
 
-            RaytracingGeometryDescription geometryDescription = new()
-            {
-                Triangles = new RaytracingGeometryTrianglesDescription(
-                        new GpuVirtualAddressAndStride(_vertexBuffer.GPUVirtualAddress, (ulong)Unsafe.SizeOf<TriangleVertex>()), Format.R32G32B32_Float, 3,
-                        indexBuffer: _indexBuffer.GPUVirtualAddress, indexFormat: Format.R32_UInt, indexCount: (uint)_indexCount),
-                Flags = RaytracingGeometryFlags.Opaque,
-            };
-
-            BuildRaytracingAccelerationStructureInputs bottomLevelInputs = new()
-            {
-                Type = RaytracingAccelerationStructureType.BottomLevel,
-                Flags = RaytracingAccelerationStructureBuildFlags.None,
-                Layout = ElementsLayout.Array,
-                DescriptorsCount = 1,
-                GeometryDescriptions = [geometryDescription],
-            };
-
-            RaytracingAccelerationStructurePrebuildInfo bottomLevelInfo = Device.GetRaytracingAccelerationStructurePrebuildInfo(bottomLevelInputs);
-
-            if (bottomLevelInfo.ResultDataMaxSizeInBytes == 0)
-            {
-                Log.LogCrit("Failed to create bottom level inputs");
-                throw new Exception();
-            }
-
             BuildRaytracingAccelerationStructureInputs topLevelInputs = new()
             {
                 Type = RaytracingAccelerationStructureType.TopLevel,
                 Flags = RaytracingAccelerationStructureBuildFlags.None,
                 Layout = ElementsLayout.Array,
-                DescriptorsCount = 1,
+                DescriptorsCount = (uint)_meshes.Count,
             };
 
             RaytracingAccelerationStructurePrebuildInfo topLevelInfo = Device.GetRaytracingAccelerationStructurePrebuildInfo(topLevelInputs);
@@ -359,58 +335,29 @@ public unsafe partial class D3D12Renderer : IDisposable
                 throw new Exception();
             }
 
+            ulong maxScratchSize = Math.Max(_meshes.Max(x => x.BottomLevelPrebuildInfo.ScratchDataSizeInBytes), topLevelInfo.ScratchDataSizeInBytes);
+
             using ID3D12Resource scratchResource = Device.CreateCommittedResource(
                 HeapType.Default,
-                ResourceDescription.Buffer(Math.Max(topLevelInfo.ScratchDataSizeInBytes, bottomLevelInfo.ScratchDataSizeInBytes), ResourceFlags.AllowUnorderedAccess),
-                ResourceStates.UnorderedAccess
-                );
-
-            _bottomLevelAccelerationStructure = Device.CreateCommittedResource(
-                HeapType.Default,
-                ResourceDescription.Buffer(Math.Max(topLevelInfo.ScratchDataSizeInBytes, bottomLevelInfo.ResultDataMaxSizeInBytes), ResourceFlags.AllowUnorderedAccess),
-                ResourceStates.RaytracingAccelerationStructure
-                );
-
-            _bottomLevelAccelerationStructure.Name = nameof(_bottomLevelAccelerationStructure);
+                ResourceDescription.Buffer(maxScratchSize, ResourceFlags.AllowUnorderedAccess),
+                ResourceStates.UnorderedAccess);
 
             _topLevelAccelerationStructure = Device.CreateCommittedResource(
                 HeapType.Default,
-                ResourceDescription.Buffer(Math.Max(topLevelInfo.ScratchDataSizeInBytes, bottomLevelInfo.ResultDataMaxSizeInBytes), ResourceFlags.AllowUnorderedAccess),
-                ResourceStates.RaytracingAccelerationStructure
-                );
-
-            _topLevelAccelerationStructure.Name = nameof(_topLevelAccelerationStructure);
-
-
-            // Create the instance buffer
-            RaytracingInstanceDescription instanceDescription = new()
-            {
-                Transform = new Matrix3x4(1, 0, 0, 0,
-                                          0, 1, 0, 0,
-                                          0, 0, 1, 0),
-                InstanceMask = 0xFF,
-                InstanceID = (UInt24)0,
-                Flags = RaytracingInstanceFlags.None,
-                InstanceContributionToHitGroupIndex = (UInt24)0,
-                AccelerationStructure = _bottomLevelAccelerationStructure.GPUVirtualAddress,
-            };
+                ResourceDescription.Buffer(topLevelInfo.ResultDataMaxSizeInBytes, ResourceFlags.AllowUnorderedAccess),
+                ResourceStates.RaytracingAccelerationStructure);
 
             _instanceBuffer = Device.CreateCommittedResource(
                 HeapType.Upload,
-                ResourceDescription.Buffer((ulong)sizeof(RaytracingInstanceDescription)),
+                ResourceDescription.Buffer((ulong)(Unsafe.SizeOf<RaytracingInstanceDescription>() * _meshes.Count)),
                 ResourceStates.GenericRead);
 
-            _instanceBuffer.SetData(instanceDescription);
+            _instanceBuffer.SetData(_meshes.Select(x => x.InstanceDescription).ToArray());
 
-            // Build the acceleration structures
-            _commandList.BuildRaytracingAccelerationStructure(new BuildRaytracingAccelerationStructureDescription
+            foreach (Mesh mesh in _meshes)
             {
-                Inputs = bottomLevelInputs,
-                ScratchAccelerationStructureData = scratchResource.GPUVirtualAddress,
-                DestinationAccelerationStructureData = _bottomLevelAccelerationStructure.GPUVirtualAddress,
-            });
-
-            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_bottomLevelAccelerationStructure)));
+                mesh.BuildBottomLevelAccelerationStructure(_commandList, scratchResource);
+            }
 
             topLevelInputs.InstanceDescriptions = _instanceBuffer.GPUVirtualAddress;
 
@@ -1082,10 +1029,11 @@ public unsafe partial class D3D12Renderer : IDisposable
                 _hitRootSignature?.Dispose();
                 _missRootSignature?.Dispose();
                 _topLevelAccelerationStructure?.Dispose();
-                _bottomLevelAccelerationStructure?.Dispose();
                 _instanceBuffer?.Dispose();
                 _shaderBindingTableBuffer?.Dispose();
             }
+
+            _resourceDescriptorHeap.Dispose();
 
             foreach (Mesh mesh in _meshes)
             {
@@ -1093,8 +1041,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             }
 
             _constantBuffer.Dispose();
-            _vertexBuffer.Dispose();
-            _indexBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
             {
                 _commandAllocators[i].Dispose();

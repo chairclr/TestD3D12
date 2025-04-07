@@ -16,9 +16,8 @@ public unsafe partial class D3D12Renderer
     private readonly uint _shaderBindingTableEntrySize;
     private readonly ID3D12Resource? _shaderBindingTableBuffer;
 
-    private readonly ID3D12Resource? _bottomLevelAccelerationStructure;
-    private readonly ID3D12Resource? _topLevelAccelerationStructure;
     private readonly ID3D12Resource? _instanceBuffer;
+    private readonly ID3D12Resource? _topLevelAccelerationStructure;
 
     private readonly ID3D12Resource? _raytracingConstantBuffer;
     private byte* _raytracingConstantsMemory = null;

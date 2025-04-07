@@ -3,7 +3,7 @@ RWTexture2D<float2> ShadowMask : register(u0);
 RaytracingAccelerationStructure SceneBVH : register(t0);
 Texture2D<float> DepthTexture : register(t1);
 
-static const float3 LightDirection = normalize(float3(-1.4, -2.0, 2.6));
+static const float3 LightPosition = float3(0.1, 1.4, 4.2);
 
 // Constants
 cbuffer constants : register(b0) {
@@ -67,15 +67,15 @@ void RayGen()
     float4 worldPos = depthToWorld(uv, depth);
 
     float3 origin = worldPos.xyz;
-    float3 direction = normalize(-LightDirection);
-    float3 normal = depthToNormal(index, uv, depth, 1.0 / dim);
+    float3 direction = normalize(LightPosition - worldPos.xyz);
+    //float3 normal = depthToNormal(index, uv, depth, 1.0 / dim);
     //float3 randomDir = normalize(float3(nrand(uv, depth), nrand(uv + float2(0.1, 0.2), depth), direction.z));
 
     RayDesc ray;
     ray.Origin = origin;
-    ray.Direction = normalize(direction);
-    ray.TMin = 0.002;
-    ray.TMax = 10000.0;
+    ray.Direction = direction;
+    ray.TMin = 0.001;
+    ray.TMax = distance(LightPosition, worldPos.xyz);
 
     ShadowPayload payload = { false, 0.0 };
     // Cool optimization here since we don't need any material info
