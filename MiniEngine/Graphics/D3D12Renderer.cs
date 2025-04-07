@@ -10,7 +10,6 @@ using MiniEngine.UI;
 using MiniEngine.Windowing;
 using SDL;
 using SharpGen.Runtime;
-using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
 using Vortice.Direct3D12.Debug;
@@ -255,8 +254,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             _resourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
             CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
-            //SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
-            //Device.CreateSampler(ref samplerDesc, resourceHandle);
 
             // We actually have a separate cbuffer for each swapchain buffer
             // Later we update only the cbuffer for the current frameIndex
@@ -312,11 +309,8 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             CreateShadowRayTracingState(out _raytracingRootSignature, out _rayGenRootSignature, out _hitRootSignature, out _missRootSignature, out _raytracingStateObject);
             CreateShadowRayTracingShaderBindingTable(out _raytracingStateObjectProperties, out _shaderBindingTableEntrySize, out _shaderBindingTableBuffer);
-        }
 
-        // Build acceleration structures needed for raytracing
-        if (RayTracingSupported)
-        {
+            // Build acceleration structures needed for raytracing
             _commandList.Reset(_commandAllocators[_frameIndex]);
 
             BuildRaytracingAccelerationStructureInputs topLevelInputs = new()
@@ -377,10 +371,7 @@ public unsafe partial class D3D12Renderer : IDisposable
             WaitIdle();
 
             Log.LogInfo("Created raytracing acceleration structures");
-        }
 
-        if (RayTracingSupported)
-        {
             uint cbufferSize = (uint)(Unsafe.SizeOf<RaytracingConstants>() * SwapChainBufferCount);
             _raytracingConstantBuffer = Device.CreateCommittedResource(
                     HeapType.Upload,
@@ -443,6 +434,8 @@ public unsafe partial class D3D12Renderer : IDisposable
             _imGuiController.NewFrame(deltaTime);
             DrawImGui();
             _imGuiController.EndFrame();
+
+            eltime += deltaTime;
 
             Update(deltaTime);
 
@@ -548,132 +541,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             Device.CreateRenderTargetView(renderTargets[i], null, rtvHandle);
             rtvHandle += (int)_rtvDescriptorSize;
         }
-    }
-
-    private int _raytracedOcclusionImGuiViewId;
-    private int _raytracedOccluderDistanceImGuiViewId;
-
-    private void CreateShadowRaytracingResources(out ID3D12Resource raytracedShadowTexture)
-    {
-        if (!RayTracingSupported)
-        {
-            throw new InvalidOperationException();
-        }
-
-        ResourceDescription outputBufferDescription = new()
-        {
-            DepthOrArraySize = 1,
-            Dimension = ResourceDimension.Texture2D,
-            Format = Format.R32G32_Float,
-            Flags = ResourceFlags.AllowUnorderedAccess,
-            Width = (ulong)Window.Size.X,
-            Height = (uint)Window.Size.Y,
-            Layout = TextureLayout.Unknown,
-            MipLevels = 1,
-            SampleDescription = new SampleDescription(1, 0),
-        };
-
-        raytracedShadowTexture = Device.CreateCommittedResource(
-            HeapType.Default,
-            outputBufferDescription,
-            ResourceStates.CopySource);
-
-        uint raytracingResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
-
-        CpuDescriptorHandle heapHandle = _raytracingResourceHeap!.GetCPUDescriptorHandleForHeapStart1();
-
-        UnorderedAccessViewDescription shadowmaskResourceViewDesc = new()
-        {
-            ViewDimension = UnorderedAccessViewDimension.Texture2D
-        };
-        Device.CreateUnorderedAccessView(_raytracedShadowMask, null, shadowmaskResourceViewDesc, heapHandle);
-        heapHandle += (int)raytracingResourceHeapSize;
-
-        // TODO: We don't need to build this every time, move to separate method probably
-        ShaderResourceViewDescription accelerationStructureViewDescription = new()
-        {
-            Format = Format.Unknown,
-            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.RaytracingAccelerationStructure,
-            Shader4ComponentMapping = ShaderComponentMapping.Default,
-            RaytracingAccelerationStructure = new()
-            {
-                Location = _topLevelAccelerationStructure!.GPUVirtualAddress
-            }
-        };
-        Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);
-        heapHandle += (int)raytracingResourceHeapSize;
-
-        ShaderResourceViewDescription depthSrvDesc = new()
-        {
-            Format = _depthStencilFormat,
-            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
-            Texture2D = new()
-            {
-                MipLevels = 1,
-                MostDetailedMip = 0,
-            }
-        };
-        Device.CreateShaderResourceView(_depthStencilTexture, depthSrvDesc, heapHandle);
-        heapHandle += (int)raytracingResourceHeapSize;
-
-        Log.LogInfo("Created raytracing resources");
-
-        // The shadow texture actually contains 2 channels of information, in the R and G channels respectively:
-        // Occlusion buffer (whether or not something is occluded)
-        // Occluder distance (how far the ray traveled before being occluded)
-
-        ShaderResourceViewDescription debugOcclusionSrvDesc = new()
-        {
-            Format = outputBufferDescription.Format,
-            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
-            Texture2D = new()
-            {
-                MipLevels = 1,
-                MostDetailedMip = 0,
-            },
-            // Forces greyscale, maps xyzw => xxxw
-            Shader4ComponentMapping = ShaderComponentMapping.Encode(
-                ShaderComponentMappingSource.FromMemoryComponent0,
-                ShaderComponentMappingSource.FromMemoryComponent0,
-                ShaderComponentMappingSource.FromMemoryComponent0,
-                ShaderComponentMappingSource.FromMemoryComponent3),
-        };
-
-        _raytracedOcclusionImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowTexture, debugOcclusionSrvDesc);
-
-        ShaderResourceViewDescription debugOccluderDistanceSrvDesc = new()
-        {
-            Format = outputBufferDescription.Format,
-            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
-            Texture2D = new()
-            {
-                MipLevels = 1,
-                MostDetailedMip = 0,
-            },
-            // Forces greyscale, maps xyzw => yyyw
-            Shader4ComponentMapping = ShaderComponentMapping.Encode(
-                        ShaderComponentMappingSource.FromMemoryComponent1,
-                        ShaderComponentMappingSource.FromMemoryComponent1,
-                        ShaderComponentMappingSource.FromMemoryComponent1,
-                        ShaderComponentMappingSource.FromMemoryComponent3),
-        };
-
-        _raytracedOccluderDistanceImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowTexture, debugOccluderDistanceSrvDesc);
-
-        ShaderResourceViewDescription shadowTextureSrvDesc = new()
-        {
-            Format = outputBufferDescription.Format,
-            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
-            Texture2D = new()
-            {
-                MipLevels = 1,
-                MostDetailedMip = 0,
-            },
-            // Forces greyscale, maps xyzw => yyyw
-            Shader4ComponentMapping = ShaderComponentMapping.Default
-        };
-
-        Device.CreateShaderResourceView(raytracedShadowTexture, shadowTextureSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
     }
 
     // Handle resizing the swapchain, render target views, and depth stencil
@@ -796,13 +663,17 @@ public unsafe partial class D3D12Renderer : IDisposable
             if (ImGui.CollapsingHeader("Image Views"))
             {
                 ImGuiExtensions.ZoomableImage("Depth Texture View", _depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
-                ImGuiExtensions.ZoomableImage("Shadow Occlusion Texture View", _raytracedOcclusionImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
-                ImGuiExtensions.ZoomableImage("Shadow Occluder Distance View", _raytracedOccluderDistanceImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                if (RayTracingSupported)
+                {
+                    ImGuiExtensions.ZoomableImage("Shadow Occlusion Texture View", _raytracedOcclusionImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                    ImGuiExtensions.ZoomableImage("Shadow Occluder Distance View", _raytracedOccluderDistanceImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                }
             }
         }
         ImGui.End();
     }
 
+    float eltime = 0;
     private void DrawFrame()
     {
         // Create the projection matrix and then copy it to the mapped part of memory for the current frameIndex
@@ -819,7 +690,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             if (Matrix4x4.Invert(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix, out Matrix4x4 inverseViewProjection))
             {
-                RaytracingConstants raytracingConstants = new(inverseViewProjection);
+                RaytracingConstants raytracingConstants = new(inverseViewProjection, eltime);
                 void* dest = _raytracingConstantsMemory + Unsafe.SizeOf<RaytracingConstants>() * _frameIndex;
                 Unsafe.CopyBlock(dest, &raytracingConstants, (uint)Unsafe.SizeOf<RaytracingConstants>());
             }
@@ -921,7 +792,7 @@ public unsafe partial class D3D12Renderer : IDisposable
 
             foreach (IRenderable renderable in _meshes)
             {
-                renderable.RenderDepth(_commandList);
+                renderable.Render(_commandList);
             }
             GpuTimingManager.EndTiming("Main Scene Forward");
         }
@@ -1087,11 +958,8 @@ public unsafe partial class D3D12Renderer : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct TriangleVertex(Vector3 position, Vector3 normal);
-
-    [StructLayout(LayoutKind.Sequential)]
     private record struct Constants(Matrix4x4 ViewProjectionMatrix);
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection);
+    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection, float time, Vector3 __ = default, Matrix4x3 _ = default);
 }

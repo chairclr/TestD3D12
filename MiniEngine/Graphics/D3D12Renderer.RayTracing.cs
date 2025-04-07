@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using MiniEngine.Logging;
 using Vortice.Direct3D12;
+using Vortice.DXGI;
 
 namespace MiniEngine.Graphics;
 
@@ -155,5 +156,131 @@ public unsafe partial class D3D12Renderer
         shaderBindingTableBuffer.Unmap(0);
 
         Log.LogInfo("Created raytracing shader binding table");
+    }
+
+    private int _raytracedOcclusionImGuiViewId;
+    private int _raytracedOccluderDistanceImGuiViewId;
+
+    private void CreateShadowRaytracingResources(out ID3D12Resource raytracedShadowTexture)
+    {
+        if (!RayTracingSupported)
+        {
+            throw new InvalidOperationException();
+        }
+
+        ResourceDescription outputBufferDescription = new()
+        {
+            DepthOrArraySize = 1,
+            Dimension = ResourceDimension.Texture2D,
+            Format = Format.R32G32_Float,
+            Flags = ResourceFlags.AllowUnorderedAccess,
+            Width = (ulong)Window.Size.X,
+            Height = (uint)Window.Size.Y,
+            Layout = TextureLayout.Unknown,
+            MipLevels = 1,
+            SampleDescription = new SampleDescription(1, 0),
+        };
+
+        raytracedShadowTexture = Device.CreateCommittedResource(
+            HeapType.Default,
+            outputBufferDescription,
+            ResourceStates.CopySource);
+
+        uint raytracingResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+
+        CpuDescriptorHandle heapHandle = _raytracingResourceHeap!.GetCPUDescriptorHandleForHeapStart1();
+
+        UnorderedAccessViewDescription shadowmaskResourceViewDesc = new()
+        {
+            ViewDimension = UnorderedAccessViewDimension.Texture2D
+        };
+        Device.CreateUnorderedAccessView(_raytracedShadowMask, null, shadowmaskResourceViewDesc, heapHandle);
+        heapHandle += (int)raytracingResourceHeapSize;
+
+        // TODO: We don't need to build this every time, move to separate method probably
+        ShaderResourceViewDescription accelerationStructureViewDescription = new()
+        {
+            Format = Format.Unknown,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.RaytracingAccelerationStructure,
+            Shader4ComponentMapping = ShaderComponentMapping.Default,
+            RaytracingAccelerationStructure = new()
+            {
+                Location = _topLevelAccelerationStructure!.GPUVirtualAddress
+            }
+        };
+        Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);
+        heapHandle += (int)raytracingResourceHeapSize;
+
+        ShaderResourceViewDescription depthSrvDesc = new()
+        {
+            Format = _depthStencilFormat,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            }
+        };
+        Device.CreateShaderResourceView(_depthStencilTexture, depthSrvDesc, heapHandle);
+        heapHandle += (int)raytracingResourceHeapSize;
+
+        Log.LogInfo("Created raytracing resources");
+
+        // The shadow texture actually contains 2 channels of information, in the R and G channels respectively:
+        // Occlusion buffer (whether or not something is occluded)
+        // Occluder distance (how far the ray traveled before being occluded)
+
+        ShaderResourceViewDescription debugOcclusionSrvDesc = new()
+        {
+            Format = outputBufferDescription.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            // Forces greyscale, maps xyzw => xxxw
+            Shader4ComponentMapping = ShaderComponentMapping.Encode(
+                ShaderComponentMappingSource.FromMemoryComponent0,
+                ShaderComponentMappingSource.FromMemoryComponent0,
+                ShaderComponentMappingSource.FromMemoryComponent0,
+                ShaderComponentMappingSource.FromMemoryComponent3),
+        };
+
+        _raytracedOcclusionImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowTexture, debugOcclusionSrvDesc);
+
+        ShaderResourceViewDescription debugOccluderDistanceSrvDesc = new()
+        {
+            Format = outputBufferDescription.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            // Forces greyscale, maps xyzw => yyyw
+            Shader4ComponentMapping = ShaderComponentMapping.Encode(
+                        ShaderComponentMappingSource.FromMemoryComponent1,
+                        ShaderComponentMappingSource.FromMemoryComponent1,
+                        ShaderComponentMappingSource.FromMemoryComponent1,
+                        ShaderComponentMappingSource.FromMemoryComponent3),
+        };
+
+        _raytracedOccluderDistanceImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowTexture, debugOccluderDistanceSrvDesc);
+
+        ShaderResourceViewDescription shadowTextureSrvDesc = new()
+        {
+            Format = outputBufferDescription.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            // Forces greyscale, maps xyzw => yyyw
+            Shader4ComponentMapping = ShaderComponentMapping.Default
+        };
+
+        Device.CreateShaderResourceView(raytracedShadowTexture, shadowTextureSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
     }
 }

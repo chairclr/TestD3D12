@@ -54,6 +54,8 @@ public class ModelLoader : IDisposable
             meshes.Add(new(_device, primitives, verts, idxs));
         }
 
+        Log.LogInfo($"Loaded {meshes.Count} meshes from {modelPath}");
+
         return meshes;
     }
 

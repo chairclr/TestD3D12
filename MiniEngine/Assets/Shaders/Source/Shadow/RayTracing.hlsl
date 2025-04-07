@@ -8,6 +8,9 @@ static const float3 LightPosition = float3(0.1, 1.4, 4.2);
 // Constants
 cbuffer constants : register(b0) {
     column_major float4x4 InverseViewProjection;
+    float time;
+    float3 __;
+    float4x3 __padding;
 }
 
 struct ShadowPayload {
@@ -67,7 +70,7 @@ void RayGen()
     float4 worldPos = depthToWorld(uv, depth);
 
     float3 origin = worldPos.xyz;
-    float3 direction = normalize(LightPosition - worldPos.xyz);
+    float3 direction = normalize((LightPosition + float3(0, 0, sin(time))) - worldPos.xyz);
     //float3 normal = depthToNormal(index, uv, depth, 1.0 / dim);
     //float3 randomDir = normalize(float3(nrand(uv, depth), nrand(uv + float2(0.1, 0.2), depth), direction.z));
 
@@ -79,7 +82,7 @@ void RayGen()
 
     ShadowPayload payload = { false, 0.0 };
     // Cool optimization here since we don't need any material info
-    TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, ~0, 0, 1, 0, ray, payload);
+    TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_FRONT_FACING_TRIANGLES, ~0, 0, 1, 0, ray, payload);
 
     ShadowMask[index] = float2(payload.hit ? 1.0 : 0.0, payload.t);
 }

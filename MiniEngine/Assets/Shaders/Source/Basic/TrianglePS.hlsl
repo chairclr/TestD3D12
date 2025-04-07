@@ -13,7 +13,7 @@ float4 PSMain(PS_INPUT input) : SV_Target {
 
     float ambient = 0.1;
     float diffuse = max(dot(normal, lightDir), 0.0);
-    float shadowFactor = saturate(1.0 - shadow.x);
+    float shadowFactor = saturate(1.0 - shadow.y);
 
     float3 color = ambient + diffuse * shadowFactor;
 
