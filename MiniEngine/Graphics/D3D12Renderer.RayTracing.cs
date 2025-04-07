@@ -164,7 +164,7 @@ public unsafe partial class D3D12Renderer
         {
             DepthOrArraySize = 1,
             Dimension = ResourceDimension.Texture2D,
-            Format = Format.R32G32_Float,
+            Format = Format.R16G16_Float,
             Flags = ResourceFlags.AllowUnorderedAccess,
             Width = (ulong)Window.Size.X,
             Height = (uint)Window.Size.Y,

@@ -760,8 +760,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.SetDescriptorHeaps([_resourceDescriptorHeap, _samplerDescriptorHeap]);
             _commandList.SetGraphicsRootConstantBufferView(0, _vertexConstantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<VertexConstants>()));
             _commandList.SetGraphicsRootConstantBufferView(1, _pixelConstantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<PixelConstants>()));
-            //_commandList.SetGraphicsRootDescriptorTable(0, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
-            //_commandList.SetGraphicsRootDescriptorTable(1, _samplerDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
 
             Color4 clearColor = Colors.CornflowerBlue;
 
