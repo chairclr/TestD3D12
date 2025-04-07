@@ -20,6 +20,7 @@ using Vortice.DXGI;
 using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
+using GltfMesh = glTFLoader.Schema.Mesh;
 
 namespace MiniEngine.Graphics;
 
@@ -37,6 +38,7 @@ public unsafe class D3D12Renderer : IDisposable
 
     public readonly D3D12CopyManager CopyManager;
     public readonly D3D12GpuTimingManager GpuTimingManager;
+    public readonly ModelLoader ModelLoader;
 
     private readonly ID3D12DescriptorHeap _rtvDescriptorHeap;
     private readonly uint _rtvDescriptorSize;
@@ -74,6 +76,8 @@ public unsafe class D3D12Renderer : IDisposable
 
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
+
+    private readonly List<Mesh> _meshes = [];
 
     // Ray tracing stuff
     public readonly bool RayTracingSupported;
@@ -326,7 +330,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             Scene scene = model.Scenes[model.Scene ?? 0];
             glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[146]];
-            Mesh mesh = model.Meshes[node.Mesh!.Value];
+            GltfMesh mesh = model.Meshes[node.Mesh!.Value];
             MeshPrimitive primitive = mesh.Primitives[0];
 
             // position data
@@ -387,6 +391,9 @@ public unsafe class D3D12Renderer : IDisposable
         }
 
         GpuTimingManager = new(Device, _commandList, GraphicsQueue);
+        ModelLoader = new(Device);
+
+        _meshes.AddRange(ModelLoader.LoadModelMeshes("Assets/Models/living_room.glb"));
 
         if (RayTracingSupported)
         {
@@ -1114,10 +1121,11 @@ public unsafe class D3D12Renderer : IDisposable
             _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
             _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _commandList.IASetVertexBuffers(0, _vertexBufferView);
-            _commandList.IASetIndexBuffer(_indexBufferView);
-            _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+            foreach (IRenderable renderable in _meshes)
+            {
+                renderable.RenderDepth(_commandList);
+            }
+
             GpuTimingManager.EndTiming("Depth Prepasss");
         }
 
@@ -1163,7 +1171,7 @@ public unsafe class D3D12Renderer : IDisposable
             GpuTimingManager.EndTiming("Shadow Ray Tracing");
         }
 
-        _commandList.SetMarker("Triangle Frame");
+        _commandList.SetMarker("Forward");
         {
             GpuTimingManager.BeginTiming("Main Scene Forward");
             _commandList.SetPipelineState(_graphicsPipelineState);
@@ -1181,10 +1189,10 @@ public unsafe class D3D12Renderer : IDisposable
             _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
             _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
 
-            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _commandList.IASetVertexBuffers(0, _vertexBufferView);
-            _commandList.IASetIndexBuffer(_indexBufferView);
-            _commandList.DrawIndexedInstanced((uint)_indexCount, 1, 0, 0, 0);
+            foreach (IRenderable renderable in _meshes)
+            {
+                renderable.RenderDepth(_commandList);
+            }
             GpuTimingManager.EndTiming("Main Scene Forward");
         }
 
@@ -1270,6 +1278,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             _frameFenceEvent.Dispose();
 
+            ModelLoader.Dispose();
             GpuTimingManager.Dispose();
             CopyManager.Dispose();
             _imGuiRenderer.Dispose();
@@ -1293,6 +1302,11 @@ public unsafe class D3D12Renderer : IDisposable
                 _bottomLevelAccelerationStructure?.Dispose();
                 _instanceBuffer?.Dispose();
                 _shaderBindingTableBuffer?.Dispose();
+            }
+
+            foreach (Mesh mesh in _meshes)
+            {
+                mesh.Dispose();
             }
 
             _constantBuffer.Dispose();

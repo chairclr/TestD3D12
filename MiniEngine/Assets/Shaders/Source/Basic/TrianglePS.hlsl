@@ -16,7 +16,7 @@ float4 PSMain(PS_INPUT input) : SV_Target {
     bool occluded = shadow.x > 0;
 
     if (occluded) {
-        litColor = clamp(litColor - diffuse, 0.1, 1.0);
+        //litColor = clamp(litColor - diffuse, 0.1, 1.0);
     }
 
     return float4(litColor, 1.0);
