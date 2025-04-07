@@ -2,8 +2,6 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using glTFLoader;
-using glTFLoader.Schema;
 using ImGuiNET;
 using MiniEngine.Input;
 using MiniEngine.Logging;
@@ -20,7 +18,6 @@ using Vortice.DXGI;
 using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
-using GltfMesh = glTFLoader.Schema.Mesh;
 
 namespace MiniEngine.Graphics;
 
@@ -64,12 +61,6 @@ public unsafe class D3D12Renderer : IDisposable
 
 
     private readonly ID3D12GraphicsCommandList4 _commandList;
-
-    private readonly ID3D12Resource _vertexBuffer;
-    private readonly VertexBufferView _vertexBufferView;
-    private readonly ID3D12Resource _indexBuffer;
-    private readonly IndexBufferView _indexBufferView;
-    private readonly int _indexCount;
 
     private readonly ID3D12DescriptorHeap _resourceDescriptorHeap;
     private readonly uint _resourceDescriptorSize;
@@ -324,70 +315,6 @@ public unsafe class D3D12Renderer : IDisposable
 
             _commandList = Device.CreateCommandList<ID3D12GraphicsCommandList4>(CommandListType.Direct, _commandAllocators[_frameIndex], _graphicsPipelineState);
             _commandList.Close();
-
-            Gltf model = Interface.LoadModel("Assets/Models/living_room.glb");
-            Span<byte> modelData = Interface.LoadBinaryBuffer("Assets/Models/living_room.glb");
-
-            Scene scene = model.Scenes[model.Scene ?? 0];
-            glTFLoader.Schema.Node node = model.Nodes[scene.Nodes[146]];
-            GltfMesh mesh = model.Meshes[node.Mesh!.Value];
-            MeshPrimitive primitive = mesh.Primitives[0];
-
-            // position data
-            Accessor posAccessor = model.Accessors[primitive.Attributes["POSITION"]];
-            BufferView posView = model.BufferViews[posAccessor.BufferView!.Value];
-            int posOffset = posView.ByteOffset + posAccessor.ByteOffset;
-            int posStride = posView.ByteStride ?? 12; // Vector3
-            ReadOnlySpan<Vector3> posData = MemoryMarshal.Cast<byte, Vector3>(modelData[posOffset..(posOffset + (posStride * posAccessor.Count))]);
-
-            // position data
-            Accessor normalAccessor = model.Accessors[primitive.Attributes["NORMAL"]];
-            BufferView normalView = model.BufferViews[normalAccessor.BufferView!.Value];
-            int normalOffset = normalView.ByteOffset + normalAccessor.ByteOffset;
-            int normalStride = normalView.ByteStride ?? 12; // Vector3
-            ReadOnlySpan<Vector3> normalData = MemoryMarshal.Cast<byte, Vector3>(modelData[normalOffset..(normalOffset + (normalStride * normalAccessor.Count))]);
-
-            // index data
-            Accessor idxAccessor = model.Accessors[primitive.Indices!.Value];
-            BufferView idxView = model.BufferViews[idxAccessor.BufferView!.Value];
-            int idxOffset = idxView.ByteOffset + idxAccessor.ByteOffset;
-            int idxStride = idxView.ByteStride ?? 4; // int
-            ReadOnlySpan<int> idxData = MemoryMarshal.Cast<byte, int>(modelData[idxOffset..(idxOffset + (idxStride * idxAccessor.Count))]);
-
-            Span<TriangleVertex> verts = new TriangleVertex[posAccessor.Count];
-            Span<int> idxs = new int[idxAccessor.Count];
-
-            for (int i = 0; i < posAccessor.Count; i++)
-            {
-                verts[i] = new TriangleVertex(posData[i], normalData[i]);
-            }
-
-            idxData.CopyTo(idxs);
-
-            uint vertexBufferStride = (uint)Unsafe.SizeOf<TriangleVertex>();
-            uint vertexBufferSize = (uint)(verts.Length * vertexBufferStride);
-
-            _vertexBuffer = Device.CreateCommittedResource(
-                HeapType.Upload,
-                ResourceDescription.Buffer(vertexBufferSize),
-                ResourceStates.GenericRead);
-
-            uint indexBufferStride = (uint)Unsafe.SizeOf<int>();
-            uint indexBufferSize = (uint)(idxs.Length * indexBufferStride);
-
-            _indexBuffer = Device.CreateCommittedResource(
-                HeapType.Upload,
-                ResourceDescription.Buffer(indexBufferSize),
-                ResourceStates.GenericRead);
-
-            _vertexBuffer.SetData((ReadOnlySpan<TriangleVertex>)verts);
-            // It's fine to cache it, but must be updated if we map/unmap the vertexBuffer I guess?
-            _vertexBufferView = new VertexBufferView(_vertexBuffer.GPUVirtualAddress, vertexBufferSize, vertexBufferStride);
-
-            _indexBuffer.SetData((ReadOnlySpan<int>)idxs);
-            _indexBufferView = new IndexBufferView(_indexBuffer.GPUVirtualAddress, indexBufferSize, Format.R32_UInt);
-
-            _indexCount = idxs.Length;
         }
 
         GpuTimingManager = new(Device, _commandList, GraphicsQueue);
