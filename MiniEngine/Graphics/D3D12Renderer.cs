@@ -309,96 +309,8 @@ public unsafe partial class D3D12Renderer : IDisposable
 
         if (RayTracingSupported)
         {
-            RootSignatureDescription1 raytracingRootSignatureDesc = new(RootSignatureFlags.None)
-            {
-                Parameters =
-                [
-                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.All),
-                ]
-            };
-
-            _raytracingRootSignature = Device.CreateRootSignature(raytracingRootSignatureDesc);
-
-            // Descriptor table combining both SRV and UAV
-            RootDescriptorTable1 descriptorTable = new(
-            [
-                // Output shadow mask
-                new DescriptorRange1(DescriptorRangeType.UnorderedAccessView, 1, 0, 0, 0), 
-
-                // Input scene bvh and then depth texture
-                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 2, 0, 0, 1),
-            ]);
-
-            RootSignatureDescription1 rayGenSignatureDesc = new(RootSignatureFlags.LocalRootSignature)
-            {
-                Parameters =
-                [
-                    // Shader resources
-                    new(descriptorTable, ShaderVisibility.All),
-                ]
-            };
-
-            _rayGenRootSignature = Device.CreateRootSignature(rayGenSignatureDesc);
-
-            RootSignatureDescription1 hitRootSignatureDesc = new(RootSignatureFlags.LocalRootSignature);
-            _hitRootSignature = Device.CreateRootSignature(hitRootSignatureDesc);
-
-            RootSignatureDescription1 missRootSignatureDesc = new(RootSignatureFlags.LocalRootSignature);
-            _missRootSignature = Device.CreateRootSignature(missRootSignatureDesc);
-
-            // Create the shaders
-            ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadow/RayTracing");
-
-            // Create the pipeline
-            StateSubObject rayGenLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("RayGen")));
-            StateSubObject hitLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("ClosestHit")));
-            StateSubObject missLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("Miss")));
-
-            StateSubObject hitGroup = new(new HitGroupDescription("HitGroup", HitGroupType.Triangles, closestHitShaderImport: "ClosestHit"));
-
-            StateSubObject raytracingShaderConfig = new(new RaytracingShaderConfig(0, 0));
-
-            StateSubObject shaderPayloadAssociation = new(new SubObjectToExportsAssociation(raytracingShaderConfig, "RayGen", "ClosestHit", "Miss"));
-
-            StateSubObject rayGenRootSignatureStateObject = new(new LocalRootSignature(_rayGenRootSignature));
-            StateSubObject rayGenRootSignatureAssociation = new(new SubObjectToExportsAssociation(rayGenRootSignatureStateObject, "RayGen"));
-
-            StateSubObject hitRootSignatureStateObject = new(new LocalRootSignature(_hitRootSignature));
-            StateSubObject hitRootSignatureAssociation = new(new SubObjectToExportsAssociation(hitRootSignatureStateObject, "ClosestHit"));
-
-            StateSubObject missRootSignatureStateObject = new(new LocalRootSignature(_missRootSignature));
-            StateSubObject missRootSignatureAssociation = new(new SubObjectToExportsAssociation(missRootSignatureStateObject, "Miss"));
-
-            StateSubObject raytracingPipelineConfig = new(new RaytracingPipelineConfig(1));
-
-            StateSubObject globalRootSignatureStateObject = new(new GlobalRootSignature(_raytracingRootSignature));
-
-            StateSubObject[] stateSubObjects =
-            [
-                rayGenLibrary,
-                hitLibrary,
-                missLibrary,
-
-                hitGroup,
-
-                raytracingShaderConfig,
-                shaderPayloadAssociation,
-
-                rayGenRootSignatureStateObject,
-                rayGenRootSignatureAssociation,
-                hitRootSignatureStateObject,
-                hitRootSignatureAssociation,
-                missRootSignatureStateObject,
-                missRootSignatureAssociation,
-
-                raytracingPipelineConfig,
-
-                globalRootSignatureStateObject,
-            ];
-
-            _raytracingStateObject = Device.CreateStateObject(new StateObjectDescription(StateObjectType.RaytracingPipeline, stateSubObjects));
-
-            Log.LogInfo("Created raytracing state object");
+            CreateShadowRayTracingState(out _raytracingRootSignature, out _rayGenRootSignature, out _hitRootSignature, out _missRootSignature, out _raytracingStateObject);
+            CreateShadowRayTracingShaderBindingTable(out _raytracingStateObjectProperties, out _shaderBindingTableEntrySize, out _shaderBindingTableBuffer);
         }
 
         // Build acceleration structures needed for raytracing
@@ -536,47 +448,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 4, DescriptorHeapFlags.ShaderVisible));
 
             CreateShadowRaytracingResources(out _raytracedShadowMask);
-        }
-
-        if (RayTracingSupported)
-        {
-            static uint Align(uint value, uint alignment)
-            {
-                return ((value + alignment - 1) / alignment) * alignment;
-            }
-
-            _raytracingStateObjectProperties = _raytracingStateObject!.QueryInterface<ID3D12StateObjectProperties>();
-
-            _shaderBindingTableEntrySize = D3D12.ShaderIdentifierSizeInBytes;
-            _shaderBindingTableEntrySize += 8; // Ray generator descriptor table
-            _shaderBindingTableEntrySize = Align(_shaderBindingTableEntrySize, D3D12.RaytracingShaderRecordByteAlignment);
-
-            ulong shaderBindingTableSize = _shaderBindingTableEntrySize * 3;
-
-            _shaderBindingTableBuffer = Device.CreateCommittedResource(
-                HeapType.Upload,
-                ResourceDescription.Buffer(shaderBindingTableSize),
-                ResourceStates.GenericRead);
-
-            byte* shaderBindingTableBufferDataPointer;
-            _shaderBindingTableBuffer.Map(0, &shaderBindingTableBufferDataPointer).CheckError();
-
-            unsafe
-            {
-                Unsafe.CopyBlockUnaligned((void*)shaderBindingTableBufferDataPointer, (void*)_raytracingStateObjectProperties.GetShaderIdentifier("RayGen"), D3D12.ShaderIdentifierSizeInBytes);
-
-                *(GpuDescriptorHandle*)(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 0 + D3D12.ShaderIdentifierSizeInBytes) = _raytracingResourceHeap!.GetGPUDescriptorHandleForHeapStart1();
-
-                Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 1, (void*)_raytracingStateObjectProperties.GetShaderIdentifier("HitGroup"), D3D12.ShaderIdentifierSizeInBytes);
-
-                *(ulong*)(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 1 + D3D12.ShaderIdentifierSizeInBytes) = _vertexBuffer.GPUVirtualAddress;
-
-                Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 2, (void*)_raytracingStateObjectProperties.GetShaderIdentifier("Miss"), D3D12.ShaderIdentifierSizeInBytes);
-            }
-
-            _shaderBindingTableBuffer.Unmap(0);
-
-            Log.LogInfo("Created raytracing shader binding table");
         }
 
         Stopwatch deltaTimeWatch = new();
