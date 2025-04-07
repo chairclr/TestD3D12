@@ -51,14 +51,6 @@ public unsafe partial class D3D12Renderer : IDisposable
     private readonly ID3D12PipelineState _graphicsPipelineState;
 
 
-    // Debug exclusive stuff
-    private readonly ID3D12RootSignature _debugRootSignature;
-    private readonly ID3D12DescriptorHeap _debugResourceDescriptorHeap;
-    private readonly uint _debugResourceDescriptorSize;
-
-    private readonly ID3D12PipelineState _depthDebugPipelineState;
-
-
     private readonly ID3D12GraphicsCommandList4 _commandList;
 
     private readonly ID3D12DescriptorHeap _resourceDescriptorHeap;
@@ -151,51 +143,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             | RootSignatureFlags.DenyGeometryShaderRootAccess
             | RootSignatureFlags.DenyAmplificationShaderRootAccess
             | RootSignatureFlags.DenyMeshShaderRootAccess;
-
-        // Debug pipeline renders a fullscreen triangle and samples from a single SRV onto the screen
-        {
-            RootDescriptorTable1 debugSrvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 1));
-            RootSignatureDescription1 debugRootSignatureDesc = new()
-            {
-                Flags = graphicsRootSignatureFlags,
-                Parameters =
-                [
-                    new(debugSrvTable, ShaderVisibility.Pixel)
-                ],
-                StaticSamplers =
-                [
-                    new StaticSamplerDescription(SamplerDescription.LinearClamp, ShaderVisibility.Pixel, 0, 0),
-                ],
-            };
-            _debugRootSignature = Device.CreateRootSignature(debugRootSignatureDesc);
-            _debugResourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 16, DescriptorHeapFlags.ShaderVisible));
-            _debugResourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
-
-            // The debug sampler is the first thing in the descriptor heap
-            // Everything else is srvs to textures to view stuff, which is also indexed by _debugRenderViewIndex
-            SamplerDescription debugSamplerDesc = SamplerDescription.LinearClamp;
-            Device.CreateSampler(ref debugSamplerDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
-
-            ReadOnlyMemory<byte> debugVS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenVS");
-            ReadOnlyMemory<byte> depthDebugPS = ShaderLoader.LoadShaderBytecode("Debug/FullscreenDepthPS");
-
-            GraphicsPipelineStateDescription depthDebugPsoDesc = new()
-            {
-                RootSignature = _debugRootSignature,
-                VertexShader = debugVS,
-                PixelShader = depthDebugPS,
-                SampleMask = uint.MaxValue,
-                PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
-                RasterizerState = RasterizerDescription.CullNone,
-                BlendState = BlendDescription.Opaque,
-                DepthStencilState = DepthStencilDescription.None,
-                RenderTargetFormats = [Format.R8G8B8A8_UNorm],
-                SampleDescription = SampleDescription.Default
-            };
-
-            _depthDebugPipelineState = Device.CreateGraphicsPipelineState(depthDebugPsoDesc);
-            Log.LogInfo("Created debug resources");
-        }
 
         nint imGuiContext = ImGui.CreateContext();
         ImGui.SetCurrentContext(imGuiContext);
@@ -522,8 +469,6 @@ public unsafe partial class D3D12Renderer : IDisposable
                 ShaderComponentMappingSource.FromMemoryComponent3),
         };
 
-        // + size * 1 because 1 is the index of the depth view, see the debug view header in imgui
-        Device.CreateShaderResourceView(depthStencilTexture, debugSrvDesc, _debugResourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1() + (int)(_debugResourceDescriptorSize * 1));
         _depthDebugImGuiViewId = _imGuiRenderer.BindTextureView(depthStencilTexture, debugSrvDesc);
     }
 
@@ -639,8 +584,6 @@ public unsafe partial class D3D12Renderer : IDisposable
         }
     }
 
-    private int _debugRenderViewIndex = 0;
-
     private void DrawImGui()
     {
         if (ImGui.Begin("Debug Window"))
@@ -652,12 +595,6 @@ public unsafe partial class D3D12Renderer : IDisposable
                 {
                     ImGui.Text($"{name}: {timer.TimeMs:F5}ms");
                 }
-            }
-
-            if (ImGui.CollapsingHeader("Fullscreen Debug Views"))
-            {
-                string[] debugViewNames = ["None", "Depth Buffer"];
-                ImGui.Combo("Texture Debug View", ref _debugRenderViewIndex, debugViewNames, debugViewNames.Length);
             }
 
             if (ImGui.CollapsingHeader("Image Views"))
@@ -797,30 +734,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             GpuTimingManager.EndTiming("Main Scene Forward");
         }
 
-        if (_debugRenderViewIndex > 0)
-        {
-            _commandList.OMSetRenderTargets(rtvDescriptor, null);
-
-            _commandList.SetMarker("Debug");
-
-            switch (_debugRenderViewIndex)
-            {
-                case 1:
-                    _commandList.SetPipelineState(_depthDebugPipelineState);
-                    break;
-                default:
-                    throw new InvalidOperationException($"No pipeline state for debug render view index {_debugRenderViewIndex}");
-            }
-
-            _commandList.SetGraphicsRootSignature(_debugRootSignature);
-
-            _commandList.SetDescriptorHeaps(_debugResourceDescriptorHeap);
-            _commandList.SetGraphicsRootDescriptorTable(1, _debugResourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1() + (int)(_debugRenderViewIndex * _debugResourceDescriptorSize));
-
-            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            _commandList.DrawInstanced(3, 1, 0, 0);
-        }
-
         ImGui.Render();
 
         GpuTimingManager.BeginTiming("ImGui");
@@ -883,10 +796,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             GpuTimingManager.Dispose();
             CopyManager.Dispose();
             _imGuiRenderer.Dispose();
-
-            _depthDebugPipelineState.Dispose();
-            _debugRootSignature.Dispose();
-            _debugResourceDescriptorHeap.Dispose();
 
             if (RayTracingSupported)
             {
