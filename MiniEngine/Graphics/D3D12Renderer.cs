@@ -59,8 +59,11 @@ public unsafe partial class D3D12Renderer : IDisposable
     private readonly ID3D12DescriptorHeap _samplerDescriptorHeap;
     private readonly uint _samplerDescriptorSize;
 
-    private readonly ID3D12Resource _constantBuffer;
-    private byte* _constantsMemory = null;
+    private readonly ID3D12Resource _vertexConstantBuffer;
+    private byte* _vertexConstantsMemory = null;
+
+    private readonly ID3D12Resource _pixelConstantBuffer;
+    private byte* _pixelConstantsMemory = null;
 
     private readonly List<Mesh> _meshes = [];
 
@@ -196,6 +199,7 @@ public unsafe partial class D3D12Renderer : IDisposable
                 Parameters =
                 [
                     new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
+                    new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Pixel),
 
                     new(srvTable, ShaderVisibility.Pixel),
                     new(samplerTable, ShaderVisibility.Pixel),
@@ -220,16 +224,32 @@ public unsafe partial class D3D12Renderer : IDisposable
 
             // We actually have a separate cbuffer for each swapchain buffer
             // Later we update only the cbuffer for the current frameIndex
-            uint cbufferSize = (uint)(Unsafe.SizeOf<Constants>() * SwapChainBufferCount);
-            _constantBuffer = Device.CreateCommittedResource(
-                    HeapType.Upload,
-                    ResourceDescription.Buffer(cbufferSize),
-                    ResourceStates.GenericRead);
-
-            // Map the entire _constantBuffer, and d3d stores the pointer to that in _constantsMemory
-            fixed (void* pMemory = &_constantsMemory)
             {
-                _constantBuffer.Map(0, pMemory);
+                uint cbufferSize = (uint)(Unsafe.SizeOf<VertexConstants>() * SwapChainBufferCount);
+                _vertexConstantBuffer = Device.CreateCommittedResource(
+                        HeapType.Upload,
+                        ResourceDescription.Buffer(cbufferSize),
+                        ResourceStates.GenericRead);
+
+                // Map the entire _constantBuffer, and d3d stores the pointer to that in _constantsMemory
+                fixed (void* pMemory = &_vertexConstantsMemory)
+                {
+                    _vertexConstantBuffer.Map(0, pMemory);
+                }
+            }
+
+            {
+                uint cbufferSize = (uint)(Unsafe.SizeOf<PixelConstants>() * SwapChainBufferCount);
+                _pixelConstantBuffer = Device.CreateCommittedResource(
+                        HeapType.Upload,
+                        ResourceDescription.Buffer(cbufferSize),
+                        ResourceStates.GenericRead);
+
+                // Map the entire _constantBuffer, and d3d stores the pointer to that in _constantsMemory
+                fixed (void* pMemory = &_pixelConstantsMemory)
+                {
+                    _pixelConstantBuffer.Map(0, pMemory);
+                }
             }
 
             InputElementDescription[] inputElementDescs =
@@ -346,7 +366,7 @@ public unsafe partial class D3D12Renderer : IDisposable
                 _raytracingConstantBuffer.Map(0, pMemory);
             }
 
-            _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 4, DescriptorHeapFlags.ShaderVisible));
+            _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 3, DescriptorHeapFlags.ShaderVisible));
 
             CreateShadowRaytracingResources(out _raytracedShadowMask);
         }
@@ -634,9 +654,15 @@ public unsafe partial class D3D12Renderer : IDisposable
         //
         // This could maybe be simplified so that there's only one constant buffer, but idk; the directx samples do it like this
         {
-            Constants constants = new(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix);
-            void* dest = _constantsMemory + Unsafe.SizeOf<Constants>() * _frameIndex;
-            Unsafe.CopyBlock(dest, &constants, (uint)Unsafe.SizeOf<Constants>());
+            VertexConstants vertexConstants = new(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix);
+            void* dest = _vertexConstantsMemory + Unsafe.SizeOf<VertexConstants>() * _frameIndex;
+            Unsafe.CopyBlock(dest, &vertexConstants, (uint)Unsafe.SizeOf<VertexConstants>());
+        }
+
+        {
+            PixelConstants pixelConstants = new(eltime, Window.Size);
+            void* dest = _pixelConstantsMemory + Unsafe.SizeOf<PixelConstants>() * _frameIndex;
+            Unsafe.CopyBlock(dest, &pixelConstants, (uint)Unsafe.SizeOf<PixelConstants>());
         }
 
         if (RayTracingSupported)
@@ -668,9 +694,9 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.OMSetRenderTargets(null!, dsvDescriptor);
             _commandList.ClearDepthStencilView(dsvDescriptor, ClearFlags.Depth, 1.0f, 0);
 
-
             // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
-            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+            _commandList.SetGraphicsRootConstantBufferView(0, _vertexConstantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<VertexConstants>()));
+            _commandList.SetGraphicsRootConstantBufferView(1, _pixelConstantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<PixelConstants>()));
 
             _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
             _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);
@@ -732,10 +758,10 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.SetGraphicsRootSignature(_graphicsRootSignature);
 
             _commandList.SetDescriptorHeaps([_resourceDescriptorHeap, _samplerDescriptorHeap]);
-            _commandList.SetGraphicsRootDescriptorTable(0, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
-            _commandList.SetGraphicsRootDescriptorTable(1, _samplerDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
-
-            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
+            _commandList.SetGraphicsRootConstantBufferView(0, _vertexConstantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<VertexConstants>()));
+            _commandList.SetGraphicsRootConstantBufferView(1, _pixelConstantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<PixelConstants>()));
+            //_commandList.SetGraphicsRootDescriptorTable(0, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
+            //_commandList.SetGraphicsRootDescriptorTable(1, _samplerDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
 
             Color4 clearColor = Colors.CornflowerBlue;
 
@@ -835,6 +861,9 @@ public unsafe partial class D3D12Renderer : IDisposable
                 _shaderBindingTableBuffer?.Dispose();
             }
 
+            _pixelConstantBuffer.Dispose();
+            _vertexConstantBuffer.Dispose();
+            _samplerDescriptorHeap.Dispose();
             _resourceDescriptorHeap.Dispose();
 
             foreach (Mesh mesh in _meshes)
@@ -842,7 +871,6 @@ public unsafe partial class D3D12Renderer : IDisposable
                 mesh.Dispose();
             }
 
-            _constantBuffer.Dispose();
             for (int i = 0; i < SwapChainBufferCount; i++)
             {
                 _commandAllocators[i].Dispose();
@@ -889,8 +917,11 @@ public unsafe partial class D3D12Renderer : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct Constants(Matrix4x4 ViewProjectionMatrix);
+    private record struct VertexConstants(Matrix4x4 ViewProjectionMatrix);
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection, float time, Vector3 __ = default, Matrix4x3 _ = default);
+    private record struct PixelConstants(float Time, Vector2 WindowSize, float _ = default, Matrix4x3 __ = default);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection, float Time, Vector3 _ = default, Matrix4x3 __ = default);
 }

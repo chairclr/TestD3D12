@@ -127,7 +127,6 @@ public unsafe partial class D3D12Renderer
         raytracingStateObjectProperties = _raytracingStateObject!.QueryInterface<ID3D12StateObjectProperties>();
 
         shaderBindingTableEntrySize = D3D12.ShaderIdentifierSizeInBytes;
-        shaderBindingTableEntrySize += 8; // uhh ??
         shaderBindingTableEntrySize = Align(shaderBindingTableEntrySize, D3D12.RaytracingShaderRecordByteAlignment);
 
         ulong shaderBindingTableSize = _shaderBindingTableEntrySize * 3;
@@ -140,18 +139,11 @@ public unsafe partial class D3D12Renderer
         byte* shaderBindingTableBufferDataPointer;
         shaderBindingTableBuffer.Map(0, &shaderBindingTableBufferDataPointer);
 
-        unsafe
-        {
-            Unsafe.CopyBlockUnaligned((void*)shaderBindingTableBufferDataPointer, (void*)raytracingStateObjectProperties.GetShaderIdentifier("RayGen"), D3D12.ShaderIdentifierSizeInBytes);
+        Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer, (void*)raytracingStateObjectProperties.GetShaderIdentifier("RayGen"), D3D12.ShaderIdentifierSizeInBytes);
 
-            //*(GpuDescriptorHandle*)(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 0 + D3D12.ShaderIdentifierSizeInBytes) = _raytracingResourceHeap!.GetGPUDescriptorHandleForHeapStart1();
+        Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + shaderBindingTableEntrySize * 1, (void*)raytracingStateObjectProperties.GetShaderIdentifier("HitGroup"), D3D12.ShaderIdentifierSizeInBytes);
 
-            Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + shaderBindingTableEntrySize * 1, (void*)raytracingStateObjectProperties.GetShaderIdentifier("HitGroup"), D3D12.ShaderIdentifierSizeInBytes);
-
-            //*(ulong*)(shaderBindingTableBufferDataPointer + _shaderBindingTableEntrySize * 1 + D3D12.ShaderIdentifierSizeInBytes) = _vertexBuffer.GPUVirtualAddress;
-
-            Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + shaderBindingTableEntrySize * 2, (void*)raytracingStateObjectProperties.GetShaderIdentifier("Miss"), D3D12.ShaderIdentifierSizeInBytes);
-        }
+        Unsafe.CopyBlockUnaligned(shaderBindingTableBufferDataPointer + shaderBindingTableEntrySize * 2, (void*)raytracingStateObjectProperties.GetShaderIdentifier("Miss"), D3D12.ShaderIdentifierSizeInBytes);
 
         shaderBindingTableBuffer.Unmap(0);
 
