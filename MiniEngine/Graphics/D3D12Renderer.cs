@@ -521,12 +521,12 @@ public unsafe partial class D3D12Renderer : IDisposable
                 MipLevels = 1,
                 MostDetailedMip = 0,
             },
-            // Forces greyscale, maps xyzw => xxxx
+            // Forces greyscale, maps xyzw => xxxw
             Shader4ComponentMapping = ShaderComponentMapping.Encode(
                 ShaderComponentMappingSource.FromMemoryComponent0,
                 ShaderComponentMappingSource.FromMemoryComponent0,
                 ShaderComponentMappingSource.FromMemoryComponent0,
-                ShaderComponentMappingSource.FromMemoryComponent0),
+                ShaderComponentMappingSource.FromMemoryComponent3),
         };
 
         // + size * 1 because 1 is the index of the depth view, see the debug view header in imgui
