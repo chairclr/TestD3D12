@@ -56,6 +56,9 @@ public unsafe partial class D3D12Renderer : IDisposable
     private readonly ID3D12DescriptorHeap _resourceDescriptorHeap;
     private readonly uint _resourceDescriptorSize;
 
+    private readonly ID3D12DescriptorHeap _samplerDescriptorHeap;
+    private readonly uint _samplerDescriptorSize;
+
     private readonly ID3D12Resource _constantBuffer;
     private byte* _constantsMemory = null;
 
@@ -178,7 +181,14 @@ public unsafe partial class D3D12Renderer : IDisposable
 
         // Normal render resources
         {
-            RootDescriptorTable1 srvTable = new(new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0));
+            RootDescriptorTable1 srvTable = new
+            ([
+                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 0),
+            ]);
+            RootDescriptorTable1 samplerTable = new
+            ([
+                new DescriptorRange1(DescriptorRangeType.Sampler, 1, 0, 0, 0),
+            ]);
 
             RootSignatureDescription1 rootSignatureDesc = new()
             {
@@ -187,7 +197,8 @@ public unsafe partial class D3D12Renderer : IDisposable
                 [
                     new(RootParameterType.ConstantBufferView, new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic), ShaderVisibility.Vertex),
 
-                    new(srvTable, ShaderVisibility.Pixel)
+                    new(srvTable, ShaderVisibility.Pixel),
+                    new(samplerTable, ShaderVisibility.Pixel),
                 ],
                 StaticSamplers =
                 [
@@ -197,10 +208,15 @@ public unsafe partial class D3D12Renderer : IDisposable
 
             _graphicsRootSignature = Device.CreateRootSignature(rootSignatureDesc);
 
-            _resourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 2, DescriptorHeapFlags.ShaderVisible));
+            _resourceDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 1, DescriptorHeapFlags.ShaderVisible));
             _resourceDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
-            CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
+            _samplerDescriptorHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.Sampler, 1, DescriptorHeapFlags.ShaderVisible));
+            _samplerDescriptorSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.Sampler);
+
+            CpuDescriptorHandle samplerHandle = _samplerDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
+            SamplerDescription samplerDesc = SamplerDescription.LinearClamp;
+            Device.CreateSampler(ref samplerDesc, new CpuDescriptorHandle(samplerHandle, 0, _samplerDescriptorSize));
 
             // We actually have a separate cbuffer for each swapchain buffer
             // Later we update only the cbuffer for the current frameIndex
@@ -671,9 +687,9 @@ public unsafe partial class D3D12Renderer : IDisposable
         if (RayTracingSupported)
         {
             GpuTimingManager.BeginTiming("Shadow Ray Tracing");
+            _commandList.SetPipelineState1(_raytracingStateObject);
             _commandList.SetComputeRootSignature(_raytracingRootSignature);
             _commandList.SetDescriptorHeaps(_raytracingResourceHeap);
-            _commandList.SetPipelineState1(_raytracingStateObject);
 
             _commandList.SetComputeRootConstantBufferView(0, _raytracingConstantBuffer!.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<RaytracingConstants>()));
 
@@ -713,6 +729,13 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             GpuTimingManager.BeginTiming("Main Scene Forward");
             _commandList.SetPipelineState(_graphicsPipelineState);
+            _commandList.SetGraphicsRootSignature(_graphicsRootSignature);
+
+            _commandList.SetDescriptorHeaps([_resourceDescriptorHeap, _samplerDescriptorHeap]);
+            _commandList.SetGraphicsRootDescriptorTable(0, _resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
+            _commandList.SetGraphicsRootDescriptorTable(1, _samplerDescriptorHeap.GetGPUDescriptorHandleForHeapStart1());
+
+            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
 
             Color4 clearColor = Colors.CornflowerBlue;
 
@@ -720,9 +743,8 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.ClearRenderTargetView(rtvDescriptor, clearColor);
 
             // We directly set the constant buffer view to the current _constantBuffer[frameIndex]
-            _commandList.SetGraphicsRootConstantBufferView(0, _constantBuffer.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<Constants>()));
 
-            _commandList.SetGraphicsRootDescriptorTable(1, new(_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1(), 0, _resourceDescriptorSize));
+            //_commandList.SetGraphicsRootDescriptorTable(1, new(_resourceDescriptorHeap.GetGPUDescriptorHandleForHeapStart1(), 0, _resourceDescriptorSize));
 
             _commandList.RSSetViewport(new Viewport(Window.Size.X, Window.Size.Y));
             _commandList.RSSetScissorRect((int)Window.Size.X, (int)Window.Size.Y);

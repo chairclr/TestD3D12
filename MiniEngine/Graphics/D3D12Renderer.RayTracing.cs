@@ -281,6 +281,7 @@ public unsafe partial class D3D12Renderer
             Shader4ComponentMapping = ShaderComponentMapping.Default
         };
 
-        Device.CreateShaderResourceView(raytracedShadowTexture, shadowTextureSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
+        CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
+        Device.CreateShaderResourceView(raytracedShadowTexture, shadowTextureSrvDesc, new(resourceHandle, 0, _resourceDescriptorSize));
     }
 }
