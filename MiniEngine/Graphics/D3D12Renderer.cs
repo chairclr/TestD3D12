@@ -355,7 +355,7 @@ public unsafe class D3D12Renderer : IDisposable
 
             for (int i = 0; i < posAccessor.Count; i++)
             {
-                verts[i] = new TriangleVertex(posData[i] * 5f, normalData[i]);
+                verts[i] = new TriangleVertex(posData[i], normalData[i]);
             }
 
             idxData.CopyTo(idxs);
@@ -741,7 +741,6 @@ public unsafe class D3D12Renderer : IDisposable
     }
 
     private int _depthDebugImGuiViewId;
-    private int _raytracedShadowMaskImGuiViewId;
 
     private void CreateDepthStencil(out ID3D12Resource depthStencilTexture, out Format depthStencilFormat)
     {
@@ -814,7 +813,10 @@ public unsafe class D3D12Renderer : IDisposable
         }
     }
 
-    private void CreateShadowRaytracingResources(out ID3D12Resource raytracedShadowMask)
+    private int _raytracedOcclusionImGuiViewId;
+    private int _raytracedOccluderDistanceImGuiViewId;
+
+    private void CreateShadowRaytracingResources(out ID3D12Resource raytracedShadowTexture)
     {
         if (!RayTracingSupported)
         {
@@ -825,7 +827,7 @@ public unsafe class D3D12Renderer : IDisposable
         {
             DepthOrArraySize = 1,
             Dimension = ResourceDimension.Texture2D,
-            Format = Format.R32_Float,
+            Format = Format.R32G32_Float,
             Flags = ResourceFlags.AllowUnorderedAccess,
             Width = (ulong)Window.Size.X,
             Height = (uint)Window.Size.Y,
@@ -834,7 +836,7 @@ public unsafe class D3D12Renderer : IDisposable
             SampleDescription = new SampleDescription(1, 0),
         };
 
-        raytracedShadowMask = Device.CreateCommittedResource(
+        raytracedShadowTexture = Device.CreateCommittedResource(
             HeapType.Default,
             outputBufferDescription,
             ResourceStates.CopySource);
@@ -879,7 +881,11 @@ public unsafe class D3D12Renderer : IDisposable
 
         Log.LogInfo("Created raytracing resources");
 
-        ShaderResourceViewDescription debugSrvDesc = new()
+        // The shadow texture actually contains 2 channels of information, in the R and G channels respectively:
+        // Occlusion buffer (whether or not something is occluded)
+        // Occluder distance (how far the ray traveled before being occluded)
+
+        ShaderResourceViewDescription debugOcclusionSrvDesc = new()
         {
             Format = outputBufferDescription.Format,
             ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
@@ -888,7 +894,7 @@ public unsafe class D3D12Renderer : IDisposable
                 MipLevels = 1,
                 MostDetailedMip = 0,
             },
-            // Forces greyscale, maps xyzw => xxxx
+            // Forces greyscale, maps xyzw => xxxw
             Shader4ComponentMapping = ShaderComponentMapping.Encode(
                 ShaderComponentMappingSource.FromMemoryComponent0,
                 ShaderComponentMappingSource.FromMemoryComponent0,
@@ -896,9 +902,41 @@ public unsafe class D3D12Renderer : IDisposable
                 ShaderComponentMappingSource.FromMemoryComponent3),
         };
 
-        _raytracedShadowMaskImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowMask, debugSrvDesc);
+        _raytracedOcclusionImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowTexture, debugOcclusionSrvDesc);
 
-        Device.CreateShaderResourceView(raytracedShadowMask, debugSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
+        ShaderResourceViewDescription debugOccluderDistanceSrvDesc = new()
+        {
+            Format = outputBufferDescription.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            // Forces greyscale, maps xyzw => yyyw
+            Shader4ComponentMapping = ShaderComponentMapping.Encode(
+                        ShaderComponentMappingSource.FromMemoryComponent1,
+                        ShaderComponentMappingSource.FromMemoryComponent1,
+                        ShaderComponentMappingSource.FromMemoryComponent1,
+                        ShaderComponentMappingSource.FromMemoryComponent3),
+        };
+
+        _raytracedOccluderDistanceImGuiViewId = _imGuiRenderer.BindTextureView(raytracedShadowTexture, debugOccluderDistanceSrvDesc);
+
+        ShaderResourceViewDescription shadowTextureSrvDesc = new()
+        {
+            Format = outputBufferDescription.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            // Forces greyscale, maps xyzw => yyyw
+            Shader4ComponentMapping = ShaderComponentMapping.Default
+        };
+
+        Device.CreateShaderResourceView(raytracedShadowTexture, shadowTextureSrvDesc, _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1());
     }
 
     // Handle resizing the swapchain, render target views, and depth stencil
@@ -918,7 +956,8 @@ public unsafe class D3D12Renderer : IDisposable
         _depthStencilTexture.Dispose();
         if (RayTracingSupported)
         {
-            _imGuiRenderer.UnbindTextureView(_raytracedShadowMaskImGuiViewId);
+            _imGuiRenderer.UnbindTextureView(_raytracedOcclusionImGuiViewId);
+            _imGuiRenderer.UnbindTextureView(_raytracedOccluderDistanceImGuiViewId);
             _raytracedShadowMask!.Dispose();
         }
 
@@ -1020,12 +1059,8 @@ public unsafe class D3D12Renderer : IDisposable
             if (ImGui.CollapsingHeader("Image Views"))
             {
                 ImGuiExtensions.ZoomableImage("Depth Texture View", _depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
-                ImGuiExtensions.ZoomableImage("Shadow Texture View", _raytracedShadowMaskImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
-                /*ImGui.SliderFloat("Depth Texture View Size", ref _depthDebugViewSize, 32f, 4096f);
-                ImGui.Image(_depthDebugImGuiViewId, Vector2.Normalize(Window.Size) * _depthDebugViewSize);
-
-                ImGui.SliderFloat("Shadow Texture View Size", ref _shadowDebugViewSize, 32f, 4096f);
-                ImGui.Image(_raytracedShadowMaskImGuiViewId, Vector2.Normalize(Window.Size) * _shadowDebugViewSize);*/
+                ImGuiExtensions.ZoomableImage("Shadow Occlusion Texture View", _raytracedOcclusionImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                ImGuiExtensions.ZoomableImage("Shadow Occluder Distance View", _raytracedOccluderDistanceImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
             }
         }
         ImGui.End();
