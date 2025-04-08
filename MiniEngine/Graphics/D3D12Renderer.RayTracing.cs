@@ -186,7 +186,7 @@ public unsafe partial class D3D12Renderer
         {
             ViewDimension = UnorderedAccessViewDimension.Texture2D
         };
-        Device.CreateUnorderedAccessView(_raytracedShadowMask, null, shadowmaskResourceViewDesc, heapHandle);
+        Device.CreateUnorderedAccessView(raytracedShadowTexture, null, shadowmaskResourceViewDesc, heapHandle);
         heapHandle += (int)raytracingResourceHeapSize;
 
         // TODO: We don't need to build this every time, move to separate method probably

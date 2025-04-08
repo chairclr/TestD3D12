@@ -40,6 +40,7 @@
     <ShaderFiles Include="ImGui/ImGuiPS" ShaderProfile="ps_6_0" ShaderEntryPoint="PSMain" />
 
     <ShaderFiles Include="Shadow/RayTracing" ShaderProfile="lib_6_3" ShaderEntryPoint="UNUSUED" />
+    <ShaderFiles Include="Shadow/ShadowBlurH" ShaderProfile="cs_6_0" ShaderEntryPoint="CSMainH" />
   </ItemGroup>
 
   <Target Name="CompileShaders" BeforeTargets="BeforeBuild">

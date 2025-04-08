@@ -72,7 +72,12 @@ public unsafe partial class D3D12Renderer : IDisposable
     public static bool RayTracingSupported => s_rayTracingSupported;
 
     private readonly ID3D12DescriptorHeap? _raytracingResourceHeap;
-    private ID3D12Resource? _raytracedShadowMask;
+    private ID3D12Resource? _shadowTexture;
+
+    private readonly ID3D12PipelineState? _shadowComputePipelineState;
+    private readonly ID3D12RootSignature? _shadowComputeRootSignature;
+    private readonly ID3D12DescriptorHeap? _shadowComputeResourceHeap;
+    private ID3D12Resource? _shadowComputeIntermedTexture;
 
     // ImGui
     private readonly ImGuiRenderer _imGuiRenderer;
@@ -283,6 +288,8 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.Close();
         }
 
+
+
         GpuTimingManager = new(Device, _commandList, GraphicsQueue);
         ModelLoader = new(Device);
 
@@ -368,9 +375,37 @@ public unsafe partial class D3D12Renderer : IDisposable
 
             _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 3, DescriptorHeapFlags.ShaderVisible));
 
-            CreateShadowRaytracingResources(out _raytracedShadowMask);
-        }
+            CreateShadowRaytracingResources(out _shadowTexture);
 
+            RootDescriptorTable1 srvTable = new
+            ([
+                new DescriptorRange1(DescriptorRangeType.UnorderedAccessView, 2, 0, 0, 0),
+                new DescriptorRange1(DescriptorRangeType.ShaderResourceView, 1, 0, 0, 2),
+            ]);
+
+            RootSignatureDescription1 rootSignatureDesc = new(RootSignatureFlags.None)
+            {
+                Parameters =
+                [
+                    new(srvTable, ShaderVisibility.All),
+                ],
+            };
+
+            _shadowComputeRootSignature = Device.CreateRootSignature(rootSignatureDesc);
+
+            ReadOnlyMemory<byte> blurCS = ShaderLoader.LoadShaderBytecode("Shadow/ShadowBlurH");
+
+            ComputePipelineStateDescription psoDesc = new()
+            {
+                RootSignature = _shadowComputeRootSignature,
+                ComputeShader = blurCS,
+            };
+
+            _shadowComputePipelineState = Device.CreateComputePipelineState(psoDesc);
+            _shadowComputeResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 3, DescriptorHeapFlags.ShaderVisible));
+
+            CreateShadowComputeResources(out _shadowComputeIntermedTexture);
+        }
         Stopwatch deltaTimeWatch = new();
 
         bool exit = false;
@@ -418,7 +453,7 @@ public unsafe partial class D3D12Renderer : IDisposable
             DrawImGui();
             _imGuiController.EndFrame();
 
-            eltime += deltaTime;
+            //eltime += deltaTime;
 
             Update(deltaTime);
 
@@ -524,6 +559,87 @@ public unsafe partial class D3D12Renderer : IDisposable
         }
     }
 
+    private int _shadowIntermedImGuiViewId;
+
+    private void CreateShadowComputeResources(out ID3D12Resource intermedShadowTexture)
+    {
+        ResourceDescription intermedBufferDesc = new()
+        {
+            DepthOrArraySize = 1,
+            Dimension = ResourceDimension.Texture2D,
+            Format = Format.R16_Float,
+            Flags = ResourceFlags.AllowUnorderedAccess,
+            Width = (ulong)Window.Size.X,
+            Height = (uint)Window.Size.Y,
+            Layout = TextureLayout.Unknown,
+            MipLevels = 1,
+            SampleDescription = new SampleDescription(1, 0),
+        };
+
+        intermedShadowTexture = Device.CreateCommittedResource(
+                    HeapType.Default,
+                    intermedBufferDesc,
+                    ResourceStates.CopySource);
+
+        uint shadowResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
+        CpuDescriptorHandle heapHandle = _shadowComputeResourceHeap!.GetCPUDescriptorHandleForHeapStart1();
+
+        UnorderedAccessViewDescription shadowTextureResourceViewDesc = new()
+        {
+            ViewDimension = UnorderedAccessViewDimension.Texture2D
+        };
+        Device.CreateUnorderedAccessView(_shadowTexture, null, shadowTextureResourceViewDesc, heapHandle);
+        heapHandle += (int)shadowResourceHeapSize;
+
+        UnorderedAccessViewDescription intermedTextureResourceViewDesc = new()
+        {
+            ViewDimension = UnorderedAccessViewDimension.Texture2D
+        };
+        Device.CreateUnorderedAccessView(intermedShadowTexture, null, intermedTextureResourceViewDesc, heapHandle);
+        heapHandle += (int)shadowResourceHeapSize;
+
+        ShaderResourceViewDescription depthSrvDesc = new()
+        {
+            Format = _depthStencilFormat,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            }
+        };
+        Device.CreateShaderResourceView(_depthStencilTexture, depthSrvDesc, heapHandle);
+        heapHandle += (int)shadowResourceHeapSize;
+
+        ShaderResourceViewDescription intermedTextureSrvDesc = new()
+        {
+            Format = intermedBufferDesc.Format,
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            Texture2D = new()
+            {
+                MipLevels = 1,
+                MostDetailedMip = 0,
+            },
+            Shader4ComponentMapping = ShaderComponentMapping.Default
+        };
+
+        CpuDescriptorHandle resourceHandle = _resourceDescriptorHeap.GetCPUDescriptorHandleForHeapStart1();
+        Device.CreateShaderResourceView(intermedShadowTexture, intermedTextureSrvDesc, new(resourceHandle, 0, _resourceDescriptorSize));
+
+        ShaderResourceViewDescription debugSrvDesc = new()
+        {
+            ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+            // Forces greyscale, maps xyzw => xxxw
+            Shader4ComponentMapping = ShaderComponentMapping.Encode(
+                        ShaderComponentMappingSource.FromMemoryComponent0,
+                        ShaderComponentMappingSource.FromMemoryComponent0,
+                        ShaderComponentMappingSource.FromMemoryComponent0,
+                        ShaderComponentMappingSource.FromMemoryComponent3),
+        };
+
+        _shadowIntermedImGuiViewId = _imGuiRenderer.BindTextureView(intermedShadowTexture, debugSrvDesc);
+    }
+
     // Handle resizing the swapchain, render target views, and depth stencil
     private void Resize(int width, int height)
     {
@@ -543,7 +659,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             _imGuiRenderer.UnbindTextureView(_raytracedOcclusionImGuiViewId);
             _imGuiRenderer.UnbindTextureView(_raytracedOccluderDistanceImGuiViewId);
-            _raytracedShadowMask!.Dispose();
+            _shadowTexture!.Dispose();
         }
 
         Log.LogInfo("Resizing swapchain buffers");
@@ -553,7 +669,7 @@ public unsafe partial class D3D12Renderer : IDisposable
 
         if (RayTracingSupported)
         {
-            CreateShadowRaytracingResources(out _raytracedShadowMask);
+            CreateShadowRaytracingResources(out _shadowTexture);
         }
 
         _frameIndex = SwapChain.CurrentBackBufferIndex;
@@ -640,6 +756,7 @@ public unsafe partial class D3D12Renderer : IDisposable
                 {
                     ImGuiExtensions.ZoomableImage("Shadow Occlusion Texture View", _raytracedOcclusionImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
                     ImGuiExtensions.ZoomableImage("Shadow Occluder Distance View", _raytracedOccluderDistanceImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                    ImGuiExtensions.ZoomableImage("Shadow Intermed View", _shadowIntermedImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
                 }
             }
         }
@@ -746,9 +863,21 @@ public unsafe partial class D3D12Renderer : IDisposable
                 },
             });
 
-            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_raytracedShadowMask)));
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_shadowTexture)));
 
             GpuTimingManager.EndTiming("Shadow Ray Tracing");
+            GpuTimingManager.BeginTiming("Shadow Blur");
+            _commandList.SetPipelineState(_shadowComputePipelineState);
+            _commandList.SetComputeRootSignature(_shadowComputeRootSignature);
+            _commandList.SetDescriptorHeaps(_shadowComputeResourceHeap);
+
+            _commandList.SetComputeRootConstantBufferView(0, _raytracingConstantBuffer!.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<RaytracingConstants>()));
+
+            _commandList.Dispatch((uint)Math.Ceiling(Window.Size.X / 16), (uint)Math.Ceiling(Window.Size.Y / 16), 1);
+
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_shadowComputeIntermedTexture)));
+
+            GpuTimingManager.EndTiming("Shadow Blur");
         }
 
         _commandList.SetMarker("Forward");
@@ -846,7 +975,7 @@ public unsafe partial class D3D12Renderer : IDisposable
             if (RayTracingSupported)
             {
                 _raytracingRootSignature?.Dispose();
-                _raytracedShadowMask?.Dispose();
+                _shadowTexture?.Dispose();
                 _raytracingStateObject?.Dispose();
                 _raytracingResourceHeap?.Dispose();
                 _raytracingConstantBuffer?.Dispose();
