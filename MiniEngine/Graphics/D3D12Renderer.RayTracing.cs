@@ -63,7 +63,7 @@ public unsafe partial class D3D12Renderer
         missRootSignature = Device.CreateRootSignature(missRootSignatureDesc);
 
         // Create the shaders
-        ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadow/RayTracing");
+        ReadOnlyMemory<byte> raytracingShader = ShaderLoader.LoadShaderBytecode("Shadow/ShadowRT");
 
         // Create the pipeline
         StateSubObject rayGenLibrary = new(new DxilLibraryDescription(raytracingShader, new ExportDescription("RayGen")));
