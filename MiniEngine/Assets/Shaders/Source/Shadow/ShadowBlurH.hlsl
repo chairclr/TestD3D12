@@ -30,7 +30,7 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
                 float dxAbs = abs(float(x));
                 float dyAbs = abs(float(y));
 
-                if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 0.001)
+                if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 1e-5)
                     continue;
 
                 maxOccluderDepth = max(maxOccluderDepth, ShadowTexture[samplePos].y);
@@ -40,8 +40,6 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
         blurRadius = lerp(0.0, 64.0, saturate((maxOccluderDepth) / 16.0));
     }
 
-    blurRadius *= centerDepth;
-    
     int radius = int(ceil(blurRadius));
 
     // Actual box blur pass
