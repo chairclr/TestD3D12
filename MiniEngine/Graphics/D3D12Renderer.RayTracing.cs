@@ -15,7 +15,7 @@ public unsafe partial class D3D12Renderer
 
     private readonly ID3D12StateObjectProperties? _shadowRTStateObjectProperties;
     private readonly uint _shaderBindingTableEntrySize;
-    private readonly ID3D12Resource? _RTShaderBindingTableBuffer;
+    private readonly ID3D12Resource? _shadowRTShaderBindingTableBuffer;
 
     private readonly ID3D12Resource? _RTInstanceBuffer;
     private readonly ID3D12Resource? _RTTopLevelAccelerationStructure;
