@@ -986,6 +986,11 @@ public unsafe partial class D3D12Renderer : IDisposable
                 _shaderBindingTableBuffer?.Dispose();
             }
 
+            _shadowComputeRootSignature?.Dispose();
+            _shadowComputePipelineState?.Dispose();
+            _shadowComputeResourceHeap?.Dispose();
+            _shadowComputeIntermedTexture?.Dispose();
+
             _pixelConstantBuffer.Dispose();
             _vertexConstantBuffer.Dispose();
             _samplerDescriptorHeap.Dispose();
