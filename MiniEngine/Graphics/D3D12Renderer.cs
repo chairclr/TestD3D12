@@ -736,6 +736,8 @@ public unsafe partial class D3D12Renderer : IDisposable
         }
     }
 
+    private Vector3 _lightPosition = new(0.1f, 1.4f, 4.2f);
+
     private void DrawImGui()
     {
         if (ImGui.Begin("Debug Window"))
@@ -759,11 +761,12 @@ public unsafe partial class D3D12Renderer : IDisposable
                     ImGuiExtensions.ZoomableImage("Shadow Intermed View", _shadowIntermedImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
                 }
             }
+
+            ImGui.DragFloat3("Light Position", ref _lightPosition, 0.05f);
         }
         ImGui.End();
     }
 
-    float eltime = 0;
     private void DrawFrame()
     {
         // Create the projection matrix and then copy it to the mapped part of memory for the current frameIndex
@@ -777,7 +780,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         }
 
         {
-            PixelConstants pixelConstants = new(eltime, Window.Size);
+            PixelConstants pixelConstants = new(Window.Size, LightPosition: _lightPosition);
             void* dest = _pixelConstantsMemory + Unsafe.SizeOf<PixelConstants>() * _frameIndex;
             Unsafe.CopyBlock(dest, &pixelConstants, (uint)Unsafe.SizeOf<PixelConstants>());
         }
@@ -786,7 +789,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             if (Matrix4x4.Invert(_mainCamera.ViewMatrix * _mainCamera.ProjectionMatrix, out Matrix4x4 inverseViewProjection))
             {
-                RaytracingConstants raytracingConstants = new(inverseViewProjection, eltime);
+                RaytracingConstants raytracingConstants = new(inverseViewProjection, LightPosition: _lightPosition);
                 void* dest = _raytracingConstantsMemory + Unsafe.SizeOf<RaytracingConstants>() * _frameIndex;
                 Unsafe.CopyBlock(dest, &raytracingConstants, (uint)Unsafe.SizeOf<RaytracingConstants>());
             }
@@ -871,7 +874,7 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.SetComputeRootSignature(_shadowComputeRootSignature);
             _commandList.SetDescriptorHeaps(_shadowComputeResourceHeap);
 
-            _commandList.Dispatch((uint)Math.Ceiling(Window.Size.X / 16), (uint)Math.Ceiling(Window.Size.Y / 16), 1);
+            _commandList.Dispatch((uint)Math.Ceiling(Window.Size.X / 32), (uint)Math.Ceiling(Window.Size.Y / 32), 1);
 
             _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_shadowComputeIntermedTexture)));
 
@@ -1052,8 +1055,8 @@ public unsafe partial class D3D12Renderer : IDisposable
     private record struct VertexConstants(Matrix4x4 ViewProjectionMatrix);
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct PixelConstants(float Time, Vector2 WindowSize, float _ = default, Matrix4x3 __ = default);
+    private record struct PixelConstants(Vector2 WindowSize, Vector2 _ = default, Vector3 LightPosition = default, float __ = default, Vector4 ___ = default, Vector4 ____ = default);
 
     [StructLayout(LayoutKind.Sequential)]
-    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection, float Time, Vector3 _ = default, Matrix4x3 __ = default);
+    private record struct RaytracingConstants(Matrix4x4 InverseViewProjection, Vector3 LightPosition, float __ = default, Matrix4x3 ___ = default);
 }

@@ -1,21 +1,20 @@
 #include "TriangleCommon.hlsl"
 
-static const float3 LightPosition = float3(0.1, 1.4, 4.2);
-
 Texture2D<float2> ShadowTexture : register(t0);
 SamplerState ShadowSampler : register(s0);
 
 cbuffer constants : register(b0) {
-    float Time;
     float2 WindowSize;
-    float __;
-    float4x3 __padding;
+    float2 __0;
+    float3 LightPosition;
+    float __1;
+    float4x2 __2;
 }
 
 float4 PSMain(PS_INPUT input) : SV_Target {
 
     float3 normal = normalize(input.normal);
-    float3 lightDir = normalize((LightPosition + float3(0, 0, sin(2.0 * Time))) - input.world_pos.xyz);
+    float3 lightDir = normalize(LightPosition - input.world_pos.xyz);
 
     float2 shadow = ShadowTexture.Sample(ShadowSampler, input.pos.xy / WindowSize);
 

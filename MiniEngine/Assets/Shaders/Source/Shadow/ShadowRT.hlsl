@@ -3,14 +3,11 @@ RWTexture2D<float2> ShadowMask : register(u0);
 RaytracingAccelerationStructure SceneBVH : register(t0);
 Texture2D<float> DepthTexture : register(t1);
 
-static const float3 LightPosition = float3(0.1, 1.4, 4.2);
-
-// Constants
 cbuffer constants : register(b0) {
     column_major float4x4 InverseViewProjection;
-    float Time;
-    float3 __;
-    float4x3 __padding;
+    float3 LightPosition;
+    float __0;
+    float4x3 __1;
 }
 
 struct ShadowPayload {
@@ -70,7 +67,7 @@ void RayGen()
     float4 worldPos = depthToWorld(uv, depth);
 
     float3 origin = worldPos.xyz;
-    float3 direction = normalize((LightPosition + float3(0, 0, sin(2.0 * Time))) - worldPos.xyz);
+    float3 direction = normalize(LightPosition - worldPos.xyz);
     //float3 normal = depthToNormal(index, uv, depth, 1.0 / dim);
     //float3 randomDir = normalize(float3(nrand(uv, depth), nrand(uv + float2(0.1, 0.2), depth), direction.z));
 
