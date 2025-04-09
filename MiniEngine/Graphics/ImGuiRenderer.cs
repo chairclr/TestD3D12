@@ -28,7 +28,7 @@ public unsafe class ImGuiRenderer : IDisposable
     private readonly RenderBuffers[] _renderBuffers;
 
     private readonly ID3D12Resource _constantBuffer;
-    private byte* _constantsMemory = null;
+    private readonly byte* _constantsMemory = null;
 
     private int _nextViewId = 0;
     private readonly ConcurrentStack<int> _freedViewIds = [];

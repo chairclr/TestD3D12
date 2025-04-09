@@ -60,10 +60,10 @@ public unsafe partial class D3D12Renderer : IDisposable
     private readonly uint _samplerDescriptorSize;
 
     private readonly ID3D12Resource _vertexConstantBuffer;
-    private byte* _vertexConstantsMemory = null;
+    private readonly byte* _vertexConstantsMemory = null;
 
     private readonly ID3D12Resource _pixelConstantBuffer;
-    private byte* _pixelConstantsMemory = null;
+    private readonly byte* _pixelConstantsMemory = null;
 
     private readonly List<Mesh> _meshes = [];
 

@@ -21,7 +21,7 @@ public unsafe partial class D3D12Renderer
     private readonly ID3D12Resource? _RTTopLevelAccelerationStructure;
 
     private readonly ID3D12Resource? _shadowRTConstantBuffer;
-    private byte* _raytracingConstantsMemory = null;
+    private readonly byte* _raytracingConstantsMemory = null;
 
     private void CreateShadowRayTracingState(out ID3D12RootSignature raytracingRootSignature, out ID3D12RootSignature rayGenRootSignature, out ID3D12RootSignature hitRootSignature, out ID3D12RootSignature missRootSignature, out ID3D12StateObject raytracingStateObject)
     {
