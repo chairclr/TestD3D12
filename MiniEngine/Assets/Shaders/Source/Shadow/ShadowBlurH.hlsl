@@ -1,3 +1,5 @@
+#include "ShadowCommon.hlsl"
+
 RWTexture2D<float2> ShadowTexture : register(u0);
 RWTexture2D<float> IntermedTexture : register(u1);
 
@@ -30,7 +32,7 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
                 float dxAbs = abs(float(x));
                 float dyAbs = abs(float(y));
 
-                if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 1e-5)
+                if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + BLUR_DEPTH_EPSILON)
                     continue;
 
                 maxOccluderDepth = max(maxOccluderDepth, ShadowTexture[samplePos].y);
@@ -57,7 +59,7 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
             float dxAbs = abs(float(x));
             float dyAbs = abs(float(y));
 
-            if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 0.001)
+            if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + BLUR_DEPTH_EPSILON)
                 continue;
 
             sum += sampleShadow;
