@@ -7,20 +7,20 @@ namespace MiniEngine.Graphics;
 
 public unsafe partial class D3D12Renderer
 {
-    private readonly ID3D12RootSignature? _raytracingRootSignature;
-    private readonly ID3D12RootSignature? _rayGenRootSignature;
-    private readonly ID3D12RootSignature? _hitRootSignature;
-    private readonly ID3D12RootSignature? _missRootSignature;
-    private readonly ID3D12StateObject? _raytracingStateObject;
+    private readonly ID3D12RootSignature? _shadowRTRootSignature;
+    private readonly ID3D12RootSignature? _shadowRTRayGenRootSignature;
+    private readonly ID3D12RootSignature? _shadowRTHitRootSignature;
+    private readonly ID3D12RootSignature? _shadowRTmissRootSignature;
+    private readonly ID3D12StateObject? _shadowRTStateObject;
 
-    private readonly ID3D12StateObjectProperties? _raytracingStateObjectProperties;
+    private readonly ID3D12StateObjectProperties? _shadowRTStateObjectProperties;
     private readonly uint _shaderBindingTableEntrySize;
-    private readonly ID3D12Resource? _shaderBindingTableBuffer;
+    private readonly ID3D12Resource? _RTShaderBindingTableBuffer;
 
-    private readonly ID3D12Resource? _instanceBuffer;
-    private readonly ID3D12Resource? _topLevelAccelerationStructure;
+    private readonly ID3D12Resource? _RTInstanceBuffer;
+    private readonly ID3D12Resource? _RTTopLevelAccelerationStructure;
 
-    private readonly ID3D12Resource? _raytracingConstantBuffer;
+    private readonly ID3D12Resource? _shadowRTConstantBuffer;
     private byte* _raytracingConstantsMemory = null;
 
     private void CreateShadowRayTracingState(out ID3D12RootSignature raytracingRootSignature, out ID3D12RootSignature rayGenRootSignature, out ID3D12RootSignature hitRootSignature, out ID3D12RootSignature missRootSignature, out ID3D12StateObject raytracingStateObject)
@@ -124,7 +124,7 @@ public unsafe partial class D3D12Renderer
             return ((value + alignment - 1) / alignment) * alignment;
         }
 
-        raytracingStateObjectProperties = _raytracingStateObject!.QueryInterface<ID3D12StateObjectProperties>();
+        raytracingStateObjectProperties = _shadowRTStateObject!.QueryInterface<ID3D12StateObjectProperties>();
 
         shaderBindingTableEntrySize = D3D12.ShaderIdentifierSizeInBytes;
         shaderBindingTableEntrySize = Align(shaderBindingTableEntrySize, D3D12.RaytracingShaderRecordByteAlignment);
@@ -180,7 +180,7 @@ public unsafe partial class D3D12Renderer
 
         uint raytracingResourceHeapSize = Device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
 
-        CpuDescriptorHandle heapHandle = _raytracingResourceHeap!.GetCPUDescriptorHandleForHeapStart1();
+        CpuDescriptorHandle heapHandle = _shadowRTResourceHeap!.GetCPUDescriptorHandleForHeapStart1();
 
         UnorderedAccessViewDescription shadowmaskResourceViewDesc = new()
         {
@@ -197,7 +197,7 @@ public unsafe partial class D3D12Renderer
             Shader4ComponentMapping = ShaderComponentMapping.Default,
             RaytracingAccelerationStructure = new()
             {
-                Location = _topLevelAccelerationStructure!.GPUVirtualAddress
+                Location = _RTTopLevelAccelerationStructure!.GPUVirtualAddress
             }
         };
         Device.CreateShaderResourceView(null, accelerationStructureViewDescription, heapHandle);

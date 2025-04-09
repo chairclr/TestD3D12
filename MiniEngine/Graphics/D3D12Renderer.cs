@@ -71,8 +71,8 @@ public unsafe partial class D3D12Renderer : IDisposable
     private static bool s_rayTracingSupported;
     public static bool RayTracingSupported => s_rayTracingSupported;
 
-    private readonly ID3D12DescriptorHeap? _raytracingResourceHeap;
-    private ID3D12Resource? _shadowTexture;
+    private readonly ID3D12DescriptorHeap? _shadowRTResourceHeap;
+    private ID3D12Resource? _shadowRTOcclusionTexture;
 
     private readonly ID3D12PipelineState? _shadowComputePipelineState;
     private readonly ID3D12RootSignature? _shadowComputeRootSignature;
@@ -297,8 +297,8 @@ public unsafe partial class D3D12Renderer : IDisposable
 
         if (RayTracingSupported)
         {
-            CreateShadowRayTracingState(out _raytracingRootSignature, out _rayGenRootSignature, out _hitRootSignature, out _missRootSignature, out _raytracingStateObject);
-            CreateShadowRayTracingShaderBindingTable(out _raytracingStateObjectProperties, out _shaderBindingTableEntrySize, out _shaderBindingTableBuffer);
+            CreateShadowRayTracingState(out _shadowRTRootSignature, out _shadowRTRayGenRootSignature, out _shadowRTHitRootSignature, out _shadowRTmissRootSignature, out _shadowRTStateObject);
+            CreateShadowRayTracingShaderBindingTable(out _shadowRTStateObjectProperties, out _shaderBindingTableEntrySize, out _shadowRTShaderBindingTableBuffer);
 
             // Build acceleration structures needed for raytracing
             _commandList.Reset(_commandAllocators[_frameIndex]);
@@ -326,33 +326,33 @@ public unsafe partial class D3D12Renderer : IDisposable
                 ResourceDescription.Buffer(maxScratchSize, ResourceFlags.AllowUnorderedAccess),
                 ResourceStates.UnorderedAccess);
 
-            _topLevelAccelerationStructure = Device.CreateCommittedResource(
+            _RTTopLevelAccelerationStructure = Device.CreateCommittedResource(
                 HeapType.Default,
                 ResourceDescription.Buffer(topLevelInfo.ResultDataMaxSizeInBytes, ResourceFlags.AllowUnorderedAccess),
                 ResourceStates.RaytracingAccelerationStructure);
 
-            _instanceBuffer = Device.CreateCommittedResource(
+            _RTInstanceBuffer = Device.CreateCommittedResource(
                 HeapType.Upload,
                 ResourceDescription.Buffer((ulong)(Unsafe.SizeOf<RaytracingInstanceDescription>() * _meshes.Count)),
                 ResourceStates.GenericRead);
 
-            _instanceBuffer.SetData(_meshes.Select(x => x.InstanceDescription).ToArray());
+            _RTInstanceBuffer.SetData(_meshes.Select(x => x.InstanceDescription).ToArray());
 
             foreach (Mesh mesh in _meshes)
             {
                 mesh.BuildBottomLevelAccelerationStructure(_commandList, scratchResource);
             }
 
-            topLevelInputs.InstanceDescriptions = _instanceBuffer.GPUVirtualAddress;
+            topLevelInputs.InstanceDescriptions = _RTInstanceBuffer.GPUVirtualAddress;
 
             _commandList.BuildRaytracingAccelerationStructure(new BuildRaytracingAccelerationStructureDescription
             {
                 Inputs = topLevelInputs,
                 ScratchAccelerationStructureData = scratchResource.GPUVirtualAddress,
-                DestinationAccelerationStructureData = _topLevelAccelerationStructure.GPUVirtualAddress,
+                DestinationAccelerationStructureData = _RTTopLevelAccelerationStructure.GPUVirtualAddress,
             });
 
-            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_topLevelAccelerationStructure)));
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_RTTopLevelAccelerationStructure)));
 
             _commandList.Close();
 
@@ -363,19 +363,19 @@ public unsafe partial class D3D12Renderer : IDisposable
             Log.LogInfo("Created raytracing acceleration structures");
 
             uint cbufferSize = (uint)(Unsafe.SizeOf<RaytracingConstants>() * SwapChainBufferCount);
-            _raytracingConstantBuffer = Device.CreateCommittedResource(
+            _shadowRTConstantBuffer = Device.CreateCommittedResource(
                     HeapType.Upload,
                     ResourceDescription.Buffer(cbufferSize),
                     ResourceStates.GenericRead);
 
             fixed (void* pMemory = &_raytracingConstantsMemory)
             {
-                _raytracingConstantBuffer.Map(0, pMemory);
+                _shadowRTConstantBuffer.Map(0, pMemory);
             }
 
-            _raytracingResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 3, DescriptorHeapFlags.ShaderVisible));
+            _shadowRTResourceHeap = Device.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView, 3, DescriptorHeapFlags.ShaderVisible));
 
-            CreateShadowRaytracingResources(out _shadowTexture);
+            CreateShadowRaytracingResources(out _shadowRTOcclusionTexture);
 
             RootDescriptorTable1 srvTable = new
             ([
@@ -588,7 +588,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             ViewDimension = UnorderedAccessViewDimension.Texture2D
         };
-        Device.CreateUnorderedAccessView(_shadowTexture, null, shadowTextureResourceViewDesc, heapHandle);
+        Device.CreateUnorderedAccessView(_shadowRTOcclusionTexture, null, shadowTextureResourceViewDesc, heapHandle);
         heapHandle += (int)shadowResourceHeapSize;
 
         UnorderedAccessViewDescription intermedTextureResourceViewDesc = new()
@@ -659,7 +659,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         {
             _imGuiRenderer.UnbindTextureView(_raytracedOcclusionImGuiViewId);
             _imGuiRenderer.UnbindTextureView(_raytracedOccluderDistanceImGuiViewId);
-            _shadowTexture!.Dispose();
+            _shadowRTOcclusionTexture!.Dispose();
         }
 
         Log.LogInfo("Resizing swapchain buffers");
@@ -669,7 +669,7 @@ public unsafe partial class D3D12Renderer : IDisposable
 
         if (RayTracingSupported)
         {
-            CreateShadowRaytracingResources(out _shadowTexture);
+            CreateShadowRaytracingResources(out _shadowRTOcclusionTexture);
         }
 
         _frameIndex = SwapChain.CurrentBackBufferIndex;
@@ -830,11 +830,11 @@ public unsafe partial class D3D12Renderer : IDisposable
         if (RayTracingSupported)
         {
             GpuTimingManager.BeginTiming("Shadow Ray Tracing");
-            _commandList.SetPipelineState1(_raytracingStateObject);
-            _commandList.SetComputeRootSignature(_raytracingRootSignature);
-            _commandList.SetDescriptorHeaps(_raytracingResourceHeap);
+            _commandList.SetPipelineState1(_shadowRTStateObject);
+            _commandList.SetComputeRootSignature(_shadowRTRootSignature);
+            _commandList.SetDescriptorHeaps(_shadowRTResourceHeap);
 
-            _commandList.SetComputeRootConstantBufferView(0, _raytracingConstantBuffer!.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<RaytracingConstants>()));
+            _commandList.SetComputeRootConstantBufferView(0, _shadowRTConstantBuffer!.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<RaytracingConstants>()));
 
             _commandList.DispatchRays(new DispatchRaysDescription
             {
@@ -844,26 +844,26 @@ public unsafe partial class D3D12Renderer : IDisposable
 
                 RayGenerationShaderRecord = new GpuVirtualAddressRange
                 {
-                    StartAddress = _shaderBindingTableBuffer!.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 0,
+                    StartAddress = _shadowRTShaderBindingTableBuffer!.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 0,
                     SizeInBytes = (ulong)_shaderBindingTableEntrySize,
                 },
 
                 HitGroupTable = new GpuVirtualAddressRangeAndStride
                 {
-                    StartAddress = _shaderBindingTableBuffer.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 1,
+                    StartAddress = _shadowRTShaderBindingTableBuffer.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 1,
                     SizeInBytes = (ulong)_shaderBindingTableEntrySize,
                     StrideInBytes = (ulong)_shaderBindingTableEntrySize,
                 },
 
                 MissShaderTable = new GpuVirtualAddressRangeAndStride
                 {
-                    StartAddress = _shaderBindingTableBuffer.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 2,
+                    StartAddress = _shadowRTShaderBindingTableBuffer.GPUVirtualAddress + (ulong)_shaderBindingTableEntrySize * 2,
                     SizeInBytes = (ulong)_shaderBindingTableEntrySize,
                     StrideInBytes = (ulong)_shaderBindingTableEntrySize,
                 },
             });
 
-            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_shadowTexture)));
+            _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_shadowRTOcclusionTexture)));
 
             GpuTimingManager.EndTiming("Shadow Ray Tracing");
             GpuTimingManager.BeginTiming("Shadow Blur");
@@ -972,18 +972,20 @@ public unsafe partial class D3D12Renderer : IDisposable
 
             if (RayTracingSupported)
             {
-                _raytracingRootSignature?.Dispose();
-                _shadowTexture?.Dispose();
-                _raytracingStateObject?.Dispose();
-                _raytracingResourceHeap?.Dispose();
-                _raytracingConstantBuffer?.Dispose();
-                _raytracingStateObjectProperties?.Dispose();
-                _rayGenRootSignature?.Dispose();
-                _hitRootSignature?.Dispose();
-                _missRootSignature?.Dispose();
-                _topLevelAccelerationStructure?.Dispose();
-                _instanceBuffer?.Dispose();
-                _shaderBindingTableBuffer?.Dispose();
+                _shadowRTRootSignature?.Dispose();
+                _shadowRTOcclusionTexture?.Dispose();
+                _shadowRTStateObject?.Dispose();
+                _shadowRTResourceHeap?.Dispose();
+                _shadowRTConstantBuffer?.Dispose();
+                _shadowRTStateObjectProperties?.Dispose();
+                _shadowRTRayGenRootSignature?.Dispose();
+                _shadowRTHitRootSignature?.Dispose();
+                _shadowRTmissRootSignature?.Dispose();
+                _shadowRTShaderBindingTableBuffer?.Dispose();
+
+                // Somewhat shadow independent resources
+                _RTTopLevelAccelerationStructure?.Dispose();
+                _RTInstanceBuffer?.Dispose();
             }
 
             _shadowComputeRootSignature?.Dispose();
