@@ -269,7 +269,6 @@ public unsafe partial class D3D12Renderer
                 MipLevels = 1,
                 MostDetailedMip = 0,
             },
-            // Forces greyscale, maps xyzw => yyyw
             Shader4ComponentMapping = ShaderComponentMapping.Default
         };
 
