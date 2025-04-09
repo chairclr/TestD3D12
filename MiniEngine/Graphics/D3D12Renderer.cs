@@ -559,7 +559,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         }
     }
 
-    private int _shadowIntermedImGuiViewId;
+    private int _shadowComputeIntermedImGuiViewId;
 
     private void CreateShadowComputeResources(out ID3D12Resource intermedShadowTexture)
     {
@@ -637,7 +637,7 @@ public unsafe partial class D3D12Renderer : IDisposable
                         ShaderComponentMappingSource.FromMemoryComponent3),
         };
 
-        _shadowIntermedImGuiViewId = _imGuiRenderer.BindTextureView(intermedShadowTexture, debugSrvDesc);
+        _shadowComputeIntermedImGuiViewId = _imGuiRenderer.BindTextureView(intermedShadowTexture, debugSrvDesc);
     }
 
     // Handle resizing the swapchain, render target views, and depth stencil
@@ -660,6 +660,9 @@ public unsafe partial class D3D12Renderer : IDisposable
             _imGuiRenderer.UnbindTextureView(_raytracedOcclusionImGuiViewId);
             _imGuiRenderer.UnbindTextureView(_raytracedOccluderDistanceImGuiViewId);
             _shadowRTOcclusionTexture!.Dispose();
+
+            _imGuiRenderer.UnbindTextureView(_shadowComputeIntermedImGuiViewId);
+            _shadowComputeIntermedTexture!.Dispose();
         }
 
         Log.LogInfo("Resizing swapchain buffers");
@@ -670,6 +673,7 @@ public unsafe partial class D3D12Renderer : IDisposable
         if (RayTracingSupported)
         {
             CreateShadowRaytracingResources(out _shadowRTOcclusionTexture);
+            CreateShadowComputeResources(out _shadowComputeIntermedTexture);
         }
 
         _frameIndex = SwapChain.CurrentBackBufferIndex;
@@ -758,7 +762,7 @@ public unsafe partial class D3D12Renderer : IDisposable
                 {
                     ImGuiExtensions.ZoomableImage("Shadow Occlusion Texture View", _raytracedOcclusionImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
                     ImGuiExtensions.ZoomableImage("Shadow Occluder Distance View", _raytracedOccluderDistanceImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
-                    ImGuiExtensions.ZoomableImage("Shadow Intermed View", _shadowIntermedImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
+                    ImGuiExtensions.ZoomableImage("Shadow Intermed View", _shadowComputeIntermedImGuiViewId, Vector2.Normalize(Window.Size) * 1000f, Window.Size);
                 }
             }
 
