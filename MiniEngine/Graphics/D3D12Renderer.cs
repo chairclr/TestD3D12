@@ -871,8 +871,6 @@ public unsafe partial class D3D12Renderer : IDisposable
             _commandList.SetComputeRootSignature(_shadowComputeRootSignature);
             _commandList.SetDescriptorHeaps(_shadowComputeResourceHeap);
 
-            _commandList.SetComputeRootConstantBufferView(0, _raytracingConstantBuffer!.GPUVirtualAddress + (ulong)(_frameIndex * Unsafe.SizeOf<RaytracingConstants>()));
-
             _commandList.Dispatch((uint)Math.Ceiling(Window.Size.X / 16), (uint)Math.Ceiling(Window.Size.Y / 16), 1);
 
             _commandList.ResourceBarrier(new ResourceBarrier(new ResourceUnorderedAccessViewBarrier(_shadowComputeIntermedTexture)));

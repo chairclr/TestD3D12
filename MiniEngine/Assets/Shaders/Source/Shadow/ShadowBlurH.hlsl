@@ -15,22 +15,32 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
     float blurRadius;
 
     if (inShadow) {
-        blurRadius = lerp(1.0, 64.0, saturate((ShadowTexture[id.xy].y) / 16.0));
+        blurRadius = lerp(0.0, 64.0, saturate((ShadowTexture[id.xy].y) / 16.0));
     }
     else {
-        float maxOccluderDist = 0.0;
-        for (int i = -16; i < 16; i++) {
-            uint2 px = uint2(id.x + i, id.y);
-            uint2 py = uint2(id.x, id.y + i);
+        float maxOccluderDepth = 0.0;
+        for (int y = -8; y <= 8; y++) {
+            for (int x = -8; x <= 8; x++) {
+                int2 offset = int2(x, y);
+                uint2 samplePos = id.xy + offset;
 
-            float occluderDistX = ShadowTexture[px].y;
-            float occluderDistY = ShadowTexture[py].y;
+                float sampleDepth = DepthTexture[samplePos];
+                float sampleShadow = ShadowTexture[samplePos].x;
 
-            maxOccluderDist = max(maxOccluderDist, max(occluderDistX, occluderDistY));
+                float dxAbs = abs(float(x));
+                float dyAbs = abs(float(y));
+
+                if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 0.001)
+                    continue;
+
+                maxOccluderDepth = max(maxOccluderDepth, ShadowTexture[samplePos].y);
+            }
         }
 
-        blurRadius = lerp(1.0, 64.0, saturate((maxOccluderDist) / 16.0));
-    } 
+        blurRadius = lerp(0.0, 64.0, saturate((maxOccluderDepth) / 16.0));
+    }
+
+    blurRadius *= centerDepth;
     
     int radius = int(ceil(blurRadius));
 
@@ -49,7 +59,7 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
             float dxAbs = abs(float(x));
             float dyAbs = abs(float(y));
 
-            if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 0.001f)
+            if (abs(centerDepth - sampleDepth) > dxAbs * dx + dyAbs * dy + 0.001)
                 continue;
 
             sum += sampleShadow;
@@ -57,5 +67,5 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
         }
     }
 
-    IntermedTexture[id.xy].x = (weight > 0.0f) ? sum / weight : 0.0f;
+    IntermedTexture[id.xy].x = blurRadius / 64.0;
 }
