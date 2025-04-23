@@ -18,33 +18,38 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
 
     bool inShadow = ShadowTexture[id.xy].x > 0.0;
 
-    float blurRadius;
+    /*float occluderDepth;
 
     if (inShadow) {
-        blurRadius = lerp(0.1, 16.0, saturate((ShadowTexture[id.xy].y) / 4.0));
+        occluderDepth = ShadowTexture[id.xy].y;
     }
     else {
         float maxOccluderDepth = 0.0;
-        for (int i = -16; i <= 16; i++) {
+        for (int i = -32; i <= 32; i++) {
             maxOccluderDepth = max(maxOccluderDepth, max(ShadowTexture[id.xy + int2(i, 0)].y, ShadowTexture[id.xy + int2(0, i)].y));
+            maxOccluderDepth = max(maxOccluderDepth, max(ShadowTexture[id.xy + int2(i, i)].y, ShadowTexture[id.xy - int2(i, i)].y));
         }
 
-        blurRadius = lerp(0.1, 16.0, saturate((maxOccluderDepth) / 4.0));
+        occluderDepth = maxOccluderDepth;
     }
 
-    blurRadius = clamp(blurRadius / linearizeDepth(centerDepth, 0.05, 1000.0), 0, 16.0);
+    float pneumbraSize = (occluderDepth / linearizeDepth(centerDepth, 0.05, 1000.0)) * 8.0;
 
-    int radius = int(ceil(blurRadius));
+    if (pneumbraSize == 0.0) {
+        IntermedTexture[id.xy].x = 0.0;
+        return;
+    }
+
+    float blurRadius = clamp(pneumbraSize, 1.0, 32.0);
+
+    float blurStep = pneumbraSize / blurRadius;
 
     // Actual box blur pass
     float sum = 0.0f;
     float weight = 0.0f;
 
-    for (int y = -radius; y <= radius; y++) {
-        for (int x = -radius; x <= radius; x++) {
-            if (length(float2(x, y)) > blurRadius + 0.5)
-                continue;
-
+    for (float y = -pneumbraSize; y <= pneumbraSize; y += blurStep) {
+        for (float x = -pneumbraSize; x <= pneumbraSize; x += blurStep) {
             int2 offset = int2(x, y);
             uint2 samplePos = id.xy + offset;
 
@@ -60,7 +65,7 @@ void CSMainH(uint3 id : SV_DispatchThreadID) {
             sum += sampleShadow;
             weight += 1.0f;
         }
-    }
+    }*/
 
-    IntermedTexture[id.xy].x = (weight > 0.0f) ? sum / weight : 0.0f;
+    IntermedTexture[id.xy].x = inShadow ? 1.0 : 0.0;
 }

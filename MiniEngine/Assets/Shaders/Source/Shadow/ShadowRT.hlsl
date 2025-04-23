@@ -74,12 +74,13 @@ void RayGen()
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = direction;
-    ray.TMin = 0.001;
+    // Interpolate here to avoid self intersection at far distances
+    ray.TMin = lerp(0.001, 1.0, saturate((depth - 0.992) * 10.0)); 
     ray.TMax = distance(LightPosition, worldPos.xyz);
 
     ShadowPayload payload = { false, 0.0 };
     // Cool optimization here since we don't need any material info
-    TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_CULL_FRONT_FACING_TRIANGLES, ~0, 0, 1, 0, ray, payload);
+    TraceRay(SceneBVH, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, ~0, 0, 1, 0, ray, payload);
 
     ShadowMask[index] = float2(payload.hit ? 1.0 : 0.0, payload.t);
 }
